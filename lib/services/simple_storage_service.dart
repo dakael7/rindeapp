@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 
@@ -21,7 +20,7 @@ class SimpleStorageService {
     try {
       await _init();
       final userJson = _prefs!.getString('user');
-      
+
       if (userJson != null && userJson.isNotEmpty) {
         return UserModel(
           id: 1,

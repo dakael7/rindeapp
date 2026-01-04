@@ -4,6 +4,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:google_fonts/google_fonts.dart'; // Mantenemos el import por si se usa en el futuro
 import 'home_screen.dart';
 import '../services/simple_storage_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'lock_screen.dart';
 
 /// Pantalla de bienvenida que solicita el nombre del usuario.
 /// Mantiene la lógica de persistencia pero aplica el diseño visual de "RINDE".
@@ -34,13 +36,29 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     try {
       final user = await _storageService.getUser();
       if (user != null && user.name.isNotEmpty) {
-        // El usuario existe, navegar al home
+        // El usuario existe, verificar si tiene bloqueo activado
+        final prefs = await SharedPreferences.getInstance();
+        final bool isLocked = prefs.getBool('app_lock_enabled') ?? false;
+
         if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => HomeScreen(userName: user.name),
-            ),
-          );
+          if (isLocked) {
+            // Ir a pantalla de bloqueo, y si pasa, ir a Home
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => LockScreen(
+                  mode: LockMode.verify,
+                  nextScreen: HomeScreen(userName: user.name),
+                ),
+              ),
+            );
+          } else {
+            // Ir directo a Home
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => HomeScreen(userName: user.name),
+              ),
+            );
+          }
         }
       }
     } catch (e) {

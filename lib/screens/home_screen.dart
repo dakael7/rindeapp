@@ -14,6 +14,8 @@ import 'wallet_screen.dart'; // Asegúrate de que este archivo exista en la mism
 import 'rate_history_screen.dart';
 import 'analytics_screen.dart';
 import '../services/exchange_rate_service.dart';
+import 'savings_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final String userName;
@@ -29,7 +31,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final _pageController = PageController(viewportFraction: 0.92);
 
   // --- Variables de Estado ---
-  Map<String, double> _rates = {
+  final Map<String, double> _rates = {
     'BCV': 52.5,
     'USDT': 54.2,
     'EURO': 56.1,
@@ -38,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String _currentDisplayMode = 'BCV'; // BCV, USDT, EURO, VES
   double _totalBalanceVES = 0.0;
   List<Map<String, dynamic>> _recentTransactions = [];
+  bool _obscureBalances = false;
 
   // --- Animaciones ---
   late AnimationController _entranceController;
@@ -102,6 +105,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (usdt != null) _rates['USDT'] = usdt;
     if (euro != null) _rates['EURO'] = euro;
     if (custom != null) _rates['CUSTOM'] = custom;
+
+    // Cargar Configuraciones
+    _obscureBalances = prefs.getBool('obscure_balances') ?? false;
+    final String defaultCurrency = prefs.getString('default_currency') ?? 'BCV';
+    if (_currentDisplayMode == 'BCV')
+      _currentDisplayMode =
+          defaultCurrency; // Aplicar default solo si no se ha cambiado manualmente en esta sesión (o lógica simple: siempre aplicar al cargar)
 
     final String? data = prefs.getString('transactions_data');
 
@@ -238,6 +248,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
+    if (index == 3) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ProfileScreen(userName: widget.userName),
+        ),
+      );
+      _loadFinancialData(); // Recargar al volver (por si cambió configuración)
+      return;
+    }
+
     setState(() {
       _selectedIndex = index;
     });
@@ -245,15 +266,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _toggleDisplayMode() {
     setState(() {
-      if (_currentDisplayMode == 'BCV')
+      if (_currentDisplayMode == 'BCV') {
         _currentDisplayMode = 'USDT';
-      else if (_currentDisplayMode == 'USDT')
+      } else if (_currentDisplayMode == 'USDT')
         _currentDisplayMode = 'EURO';
       else if (_currentDisplayMode == 'EURO') {
-        if ((_rates['CUSTOM'] ?? 0) > 0)
+        if ((_rates['CUSTOM'] ?? 0) > 0) {
           _currentDisplayMode = 'CUSTOM';
-        else
+        } else {
           _currentDisplayMode = 'VES';
+        }
       } else if (_currentDisplayMode == 'CUSTOM')
         _currentDisplayMode = 'VES';
       else
@@ -278,9 +300,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       label = 'Tasa Personalizada';
     } else {
       amount = _totalBalanceVES / (rate == 0 ? 1 : rate);
-      if (_currentDisplayMode == 'EURO')
+      if (_currentDisplayMode == 'EURO') {
         symbol = '€';
-      else if (_currentDisplayMode == 'USDT')
+      } else if (_currentDisplayMode == 'USDT')
         symbol = '₮';
       else
         symbol = '\$';
@@ -396,8 +418,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       displayData: displayData,
                       onToggleMode: _toggleDisplayMode,
                       allHabitsDone: true,
+                      obscureBalances: _obscureBalances,
                     ),
                   ),
+
+                  const SizedBox(height: 30),
+
+                  // 3. Mi Alcancía (Nueva Sección)
+                  _SavingsBanner(onTap: _openSavings),
 
                   const SizedBox(height: 30),
 
@@ -499,6 +527,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
     );
   }
+
+  // Método para abrir la alcancía y recargar datos al volver
+  void _openSavings() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SavingsScreen()),
+    );
+    _loadFinancialData(); // Recargar balance por si hubo movimientos
+  }
 }
 
 // ==========================================
@@ -574,9 +611,9 @@ class _RecentActivityList extends StatelessWidget {
     final dynamic rawLegacy = t['amountInUSD'];
 
     double amount = 0.0;
-    if (rawOriginal is num)
+    if (rawOriginal is num) {
       amount = rawOriginal.toDouble();
-    else if (rawLegacy is num)
+    } else if (rawLegacy is num)
       amount = rawLegacy.toDouble();
     else
       amount =
@@ -649,6 +686,85 @@ class _RecentActivityList extends StatelessWidget {
   }
 }
 
+class _SavingsBanner extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _SavingsBanner({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+      child: _BouncingWidget(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF132B3D), Color(0xFF0F2231)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4ADE80).withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.savings,
+                  color: Color(0xFF4ADE80),
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Mi Alcancía',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      'Gestiona tus metas de ahorro',
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFFB0BEC5),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white24,
+                size: 16,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // Pantalla de Calculadora de Tasas (BottomSheet)
 class _CurrencyCalculatorSheet extends StatefulWidget {
   final Map<String, double> rates;
@@ -664,7 +780,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
   final GlobalKey _globalKey = GlobalKey();
   String _amount = '';
   String _baseCurrency = 'USD'; // USD, VES
-  List<String> _selectedRates = ['BCV'];
+  final List<String> _selectedRates = ['BCV'];
 
   late Map<String, double> _activeRates;
   DateTime? _selectedDate;
@@ -698,6 +814,12 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
   }
 
   Future<void> _showSuccessNotification() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool notificationsEnabled =
+        prefs.getBool('notifications_enabled') ?? true;
+
+    if (!notificationsEnabled) return;
+
     const AndroidNotificationDetails androidNotificationDetails =
         AndroidNotificationDetails(
           'rinde_channel',
@@ -759,12 +881,16 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
               surface: Color(0xFF132B3D),
               onSurface: Colors.white,
             ),
-            dialogBackgroundColor: const Color(0xFF071925),
+            dialogTheme: DialogThemeData(
+              backgroundColor: const Color(0xFF071925),
+            ),
           ),
           child: child!,
         );
       },
     );
+
+    if (!mounted) return;
 
     if (picked != null) {
       final isToday =
@@ -1393,6 +1519,7 @@ class _MainInfoCards extends StatelessWidget {
   final Map<String, dynamic> displayData;
   final VoidCallback onToggleMode;
   final bool allHabitsDone;
+  final bool obscureBalances;
 
   const _MainInfoCards({
     required this.pageController,
@@ -1401,6 +1528,7 @@ class _MainInfoCards extends StatelessWidget {
     required this.displayData,
     required this.onToggleMode,
     required this.allHabitsDone,
+    required this.obscureBalances,
   });
 
   @override
@@ -1424,6 +1552,7 @@ class _MainInfoCards extends StatelessWidget {
                         label: displayData['label'],
                         onTap: onToggleMode,
                         plantIsHealthy: allHabitsDone,
+                        obscureBalances: obscureBalances,
                       )
                     : _InfoCard(
                         index: index,
@@ -1465,6 +1594,7 @@ class _PowerCard extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final bool plantIsHealthy;
+  final bool obscureBalances;
 
   const _PowerCard({
     required this.cardColor,
@@ -1474,6 +1604,7 @@ class _PowerCard extends StatelessWidget {
     required this.label,
     required this.onTap,
     required this.plantIsHealthy,
+    required this.obscureBalances,
   });
 
   @override
@@ -1507,7 +1638,9 @@ class _PowerCard extends StatelessWidget {
                 Text('Poder de Compra', style: theme.titleMedium),
                 const SizedBox(height: 8),
                 Text(
-                  '$symbol${amount.toStringAsFixed(2)}',
+                  obscureBalances
+                      ? '$symbol ****'
+                      : '$symbol${amount.toStringAsFixed(2)}',
                   style: theme.headlineLarge?.copyWith(fontSize: 38),
                 ),
                 const SizedBox(height: 8),

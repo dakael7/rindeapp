@@ -3,6 +3,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'recurring_transactions_screen.dart';
+import 'debt_screen.dart';
 
 // ==========================================
 // MODELO DE DATOS ACTUALIZADO (Algoritmo Generalizado)
@@ -96,6 +98,7 @@ class _WalletScreenState extends State<WalletScreen> {
   void initState() {
     super.initState();
     _loadData();
+    _checkRecurringTransactions();
   }
 
   /// Carga datos y configuración
@@ -125,6 +128,114 @@ class _WalletScreenState extends State<WalletScreen> {
       if (custom != null) _currentRates['CUSTOM'] = custom;
       _isLoading = false;
     });
+  }
+
+  /// MOTOR DE AUTOMATIZACIÓN
+  /// Verifica si hay pagos programados pendientes y los ejecuta
+  Future<void> _checkRecurringTransactions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? recurringData = prefs.getString('recurring_transactions');
+
+    if (recurringData == null) return;
+
+    List<dynamic> decoded = jsonDecode(recurringData);
+    List<RecurringTransaction> recurringItems = decoded
+        .map((e) => RecurringTransaction.fromJson(e))
+        .toList();
+    bool changesMade = false;
+    int executedCount = 0;
+
+    final now = DateTime.now();
+
+    for (var item in recurringItems) {
+      if (!item.active) continue;
+
+      // Si la fecha de ejecución ya pasó o es hoy
+      if (item.nextExecution.isBefore(now) ||
+          item.nextExecution.isAtSameMomentAs(now)) {
+        // 1. Calcular Monto en VES
+        double amountInVES = 0.0;
+        double rateUsed = 1.0;
+        String rateType = 'N/A';
+
+        if (item.currency == 'VES') {
+          amountInVES = item.amount;
+        } else {
+          // Usar tasa BCV por defecto para automatizaciones
+          rateUsed = _currentRates['BCV'] ?? 52.5;
+          rateType = 'BCV';
+
+          if (item.isIndexed) {
+            // Si es indexado, el registro es en VES calculado
+            amountInVES = item.amount * rateUsed;
+          } else {
+            // Si es moneda extranjera pura, el sistema calcula VES internamente
+            amountInVES = item.amount * rateUsed;
+          }
+        }
+
+        // 2. Crear Transacción Real
+        final newTx = Transaction(
+          id: 'AUTO_${DateTime.now().millisecondsSinceEpoch}_${executedCount}',
+          title: '${item.title} (Auto)',
+          originalAmount: item.isIndexed
+              ? amountInVES
+              : item.amount, // Si es indexado, guardamos el VES resultante como original
+          originalCurrency: item.isIndexed ? 'VES' : item.currency,
+          rateType: rateType,
+          exchangeRate: rateUsed,
+          amountInVES: amountInVES,
+          isExpense: item.isExpense,
+          date: DateTime.now(),
+        );
+
+        _transactions.insert(0, newTx);
+
+        // 3. Calcular Siguiente Fecha
+        DateTime next = item.nextExecution;
+        if (item.frequencyType == 'DAYS') {
+          next = next.add(Duration(days: item.frequencyValue));
+        } else if (item.frequencyType == 'WEEKLY') {
+          next = next.add(const Duration(days: 7));
+        } else {
+          // Mensual simple: sumar 30 días aprox o lógica de mes real
+          // Para simplificar en ejecución automática, sumamos días del mes actual
+          final daysInMonth = DateTime(next.year, next.month + 1, 0).day;
+          next = next.add(Duration(days: daysInMonth));
+        }
+
+        // Asegurar que la próxima fecha sea en el futuro (por si la app estuvo cerrada mucho tiempo)
+        while (next.isBefore(now)) {
+          next = next.add(const Duration(days: 1)); // Fallback simple
+        }
+
+        item.nextExecution = next;
+        changesMade = true;
+        executedCount++;
+      }
+    }
+
+    if (changesMade) {
+      // Guardar Transacciones
+      await _saveTransactions();
+
+      // Guardar Automatizaciones Actualizadas
+      final String encodedRecurring = jsonEncode(
+        recurringItems.map((e) => e.toJson()).toList(),
+      );
+      await prefs.setString('recurring_transactions', encodedRecurring);
+
+      setState(() {}); // Refrescar UI
+
+      if (mounted && executedCount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Se ejecutaron $executedCount pagos automáticos'),
+            backgroundColor: _primaryGreen,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _saveTransactions() async {
@@ -179,8 +290,9 @@ class _WalletScreenState extends State<WalletScreen> {
 
   // --- Diálogo de Configuración de Tasas ---
   void _showRateConfigDialog() {
-    final customController =
-        TextEditingController(text: (_currentRates['CUSTOM'] ?? 0).toString());
+    final customController = TextEditingController(
+      text: (_currentRates['CUSTOM'] ?? 0).toString(),
+    );
 
     showDialog(
       context: context,
@@ -216,8 +328,7 @@ class _WalletScreenState extends State<WalletScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              final custom =
-                  double.tryParse(customController.text) ?? 0.0;
+              final custom = double.tryParse(customController.text) ?? 0.0;
               _saveCustomRate(custom);
               Navigator.pop(context);
             },
@@ -327,6 +438,22 @@ class _WalletScreenState extends State<WalletScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.calendar_month, color: Colors.white),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const DebtScreen()),
+            ).then((_) => _loadData()),
+          ),
+          IconButton(
+            icon: const Icon(Icons.autorenew, color: Colors.white),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const RecurringTransactionsScreen(),
+              ),
+            ).then((_) => _checkRecurringTransactions()),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined, color: Colors.white),
             onPressed: _showRateConfigDialog,
