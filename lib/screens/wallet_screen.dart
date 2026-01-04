@@ -313,8 +313,6 @@ class _WalletScreenState extends State<WalletScreen> {
             const SizedBox(height: 8),
             _buildReadOnlyRate('USDT', _currentRates['USDT']),
             const SizedBox(height: 8),
-            _buildReadOnlyRate('EURO', _currentRates['EURO']),
-            const Divider(height: 24, color: Colors.white24),
             _buildRateInput(customController, 'Tasa Personalizada'),
           ],
         ),
@@ -580,8 +578,6 @@ class _WalletScreenState extends State<WalletScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildMiniProjection('Euro', '€', _projectBalanceTo('EURO')),
-                const SizedBox(width: 15),
                 _buildMiniProjection('USDT', '\$', _projectBalanceTo('USDT')),
               ],
             ),
@@ -915,7 +911,7 @@ class _TransactionFormState extends State<_TransactionForm> {
                         Icons.keyboard_arrow_down,
                         color: Colors.white,
                       ),
-                      items: ['VES', 'USD', 'EUR'].map((String val) {
+                      items: ['VES', 'USD'].map((String val) {
                         return DropdownMenuItem(
                           value: val,
                           child: Text(
@@ -954,7 +950,6 @@ class _TransactionFormState extends State<_TransactionForm> {
                 children: [
                   _buildRateChip('BCV', widget.rates['BCV'] ?? 0),
                   _buildRateChip('USDT', widget.rates['USDT'] ?? 0),
-                  _buildRateChip('EURO', widget.rates['EURO'] ?? 0),
                   if ((widget.rates['CUSTOM'] ?? 0) > 0)
                     _buildRateChip('PERSONAL', widget.rates['CUSTOM'] ?? 0),
                   _buildRateChip('MANUAL', 0),

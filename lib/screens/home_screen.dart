@@ -16,6 +16,7 @@ import 'analytics_screen.dart';
 import '../services/exchange_rate_service.dart';
 import 'savings_screen.dart';
 import 'profile_screen.dart';
+import 'debt_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final String userName;
@@ -41,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   double _totalBalanceVES = 0.0;
   List<Map<String, dynamic>> _recentTransactions = [];
   bool _obscureBalances = false;
+  int _pendingCount = 0;
+  double _pendingAmountVES = 0.0;
 
   // --- Animaciones ---
   late AnimationController _entranceController;
@@ -172,6 +175,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
       // Intentar actualizar tasas online en segundo plano
       _updateRatesOnline();
+      _calculatePendingPayments();
     }
   }
 
@@ -193,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await prefs.setDouble('rate_euro', newRates['EURO']!);
 
       _saveRateHistory(newRates);
+      _calculatePendingPayments();
     }
   }
 
@@ -227,6 +232,69 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     await prefs.setString('rates_history_data', jsonEncode(history));
+  }
+
+  Future<void> _calculatePendingPayments() async {
+    final prefs = await SharedPreferences.getInstance();
+    double totalVES = 0.0;
+    int count = 0;
+    final now = DateTime.now();
+    final next30Days = now.add(const Duration(days: 30));
+
+    // 1. Recurring Transactions (Gastos Automatizados)
+    final String? recurringData = prefs.getString('recurring_transactions');
+    if (recurringData != null) {
+      final List<dynamic> decoded = jsonDecode(recurringData);
+      for (var item in decoded) {
+        if (item['active'] == true && item['isExpense'] == true) {
+          DateTime nextExecution = DateTime.parse(item['nextExecution']);
+          if (nextExecution.isBefore(next30Days)) {
+            double amount = (item['amount'] ?? 0).toDouble();
+            String currency = item['currency'] ?? 'VES';
+            // Convert to VES
+            if (currency == 'VES') {
+              totalVES += amount;
+            } else {
+              double rate = _rates['BCV'] ?? 52.5;
+              totalVES += amount * rate;
+            }
+            count++;
+          }
+        }
+      }
+    }
+
+    // 2. Debts (Deudas Programadas)
+    final String? debtsData = prefs.getString('debts_data');
+    if (debtsData != null) {
+      final List<dynamic> decoded = jsonDecode(debtsData);
+      for (var item in decoded) {
+        if (item['isExpense'] == true && item['isCompleted'] == false) {
+          DateTime nextDate = DateTime.parse(item['nextDate']);
+          if (nextDate.isBefore(next30Days)) {
+            double totalAmount = (item['totalAmount'] ?? 0).toDouble();
+            int totalInstallments = item['totalInstallments'] ?? 1;
+            double installmentAmount = totalAmount / totalInstallments;
+
+            String currency = item['currency'] ?? 'USD';
+            if (currency == 'VES') {
+              totalVES += installmentAmount;
+            } else {
+              double rate = _rates['BCV'] ?? 52.5;
+              totalVES += installmentAmount * rate;
+            }
+            count++;
+          }
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _pendingCount = count;
+        _pendingAmountVES = totalVES;
+      });
+    }
   }
 
   void _onItemTapped(int index) async {
@@ -268,9 +336,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     setState(() {
       if (_currentDisplayMode == 'BCV') {
         _currentDisplayMode = 'USDT';
-      } else if (_currentDisplayMode == 'USDT')
-        _currentDisplayMode = 'EURO';
-      else if (_currentDisplayMode == 'EURO') {
+      } else if (_currentDisplayMode == 'USDT') {
         if ((_rates['CUSTOM'] ?? 0) > 0) {
           _currentDisplayMode = 'CUSTOM';
         } else {
@@ -427,6 +493,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   // 3. Mi Alcancía (Nueva Sección)
                   _SavingsBanner(onTap: _openSavings),
 
+                  const SizedBox(height: 20),
+
+                  // 3.5 Pagos Pendientes
+                  _PendingPaymentsBanner(
+                    count: _pendingCount,
+                    amountVES: _pendingAmountVES,
+                    rates: _rates,
+                    displayMode: _currentDisplayMode,
+                    onTap: _openPendingPayments,
+                    obscureBalances: _obscureBalances,
+                  ),
+
                   const SizedBox(height: 30),
 
                   // 4. Actividades Recientes
@@ -535,6 +613,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       MaterialPageRoute(builder: (context) => const SavingsScreen()),
     );
     _loadFinancialData(); // Recargar balance por si hubo movimientos
+  }
+
+  void _openPendingPayments() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const DebtScreen()),
+    );
+    _loadFinancialData();
   }
 }
 
@@ -744,6 +830,114 @@ class _SavingsBanner extends StatelessWidget {
                     ),
                     Text(
                       'Gestiona tus metas de ahorro',
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFFB0BEC5),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white24,
+                size: 16,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingPaymentsBanner extends StatelessWidget {
+  final int count;
+  final double amountVES;
+  final Map<String, double> rates;
+  final String displayMode;
+  final VoidCallback onTap;
+  final bool obscureBalances;
+
+  const _PendingPaymentsBanner({
+    required this.count,
+    required this.amountVES,
+    required this.rates,
+    required this.displayMode,
+    required this.onTap,
+    required this.obscureBalances,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Calcular monto a mostrar según displayMode
+    double displayAmount = amountVES;
+    String symbol = 'Bs';
+    final rate = rates[displayMode] ?? 1.0;
+
+    if (displayMode != 'VES') {
+      displayAmount = amountVES / (rate == 0 ? 1 : rate);
+      if (displayMode == 'EURO')
+        symbol = '€';
+      else if (displayMode == 'USDT')
+        symbol = '₮';
+      else
+        symbol = '\$';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+      child: _BouncingWidget(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF132B3D), Color(0xFF0F2231)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withOpacity(0.08)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFB74D).withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.calendar_today,
+                  color: Color(0xFFFFB74D),
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pagos Programados',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      count == 0
+                          ? 'Estás al día'
+                          : '$count pendientes • ${obscureBalances ? "****" : "$symbol${displayAmount.toStringAsFixed(2)}"}',
                       style: GoogleFonts.poppins(
                         color: const Color(0xFFB0BEC5),
                         fontSize: 12,
@@ -1356,7 +1550,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
               fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
-            items: ['BCV', 'USDT', 'EURO', 'CUSTOM'].map((String value) {
+            items: ['BCV', 'USDT', 'CUSTOM'].map((String value) {
               String label = value;
               if (value == 'CUSTOM') label = 'Personalizada';
               return DropdownMenuItem<String>(value: value, child: Text(label));

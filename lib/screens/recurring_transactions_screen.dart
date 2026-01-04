@@ -534,7 +534,7 @@ class _RecurringFormState extends State<_RecurringForm> {
                       child: DropdownButton<String>(
                         value: _currency,
                         dropdownColor: cardColor,
-                        items: ['VES', 'USD', 'EUR']
+                        items: ['VES', 'USD']
                             .map(
                               (e) => DropdownMenuItem(
                                 value: e,

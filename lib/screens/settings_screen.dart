@@ -240,7 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       color: _primaryGreen,
                       fontWeight: FontWeight.bold,
                     ),
-                    items: ['BCV', 'USDT', 'EURO', 'VES'].map((String value) {
+                    items: ['BCV', 'USDT', 'VES'].map((String value) {
                       return DropdownMenuItem<String>(
                         value: value,
                         child: Text(value),

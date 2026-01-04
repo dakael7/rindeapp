@@ -96,7 +96,6 @@ class _RateHistoryScreenState extends State<RateHistoryScreen> {
                         children: [
                           _buildRateItem('BCV', rates['BCV'], primaryGreen),
                           _buildRateItem('USDT', rates['USDT'], Colors.white),
-                          _buildRateItem('EURO', rates['EURO'], Colors.white),
                         ],
                       ),
                     ],

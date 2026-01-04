@@ -625,7 +625,7 @@ class _DebtFormState extends State<_DebtForm> {
                       child: DropdownButton<String>(
                         value: _currency,
                         dropdownColor: cardColor,
-                        items: ['VES', 'USD', 'EUR']
+                        items: ['VES', 'USD']
                             .map(
                               (e) => DropdownMenuItem(
                                 value: e,
