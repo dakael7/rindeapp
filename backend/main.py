@@ -24,7 +24,7 @@ def get_rates():
     try:
         # Importamos aquí para evitar errores al inicio si la librería tarda en cargar
         from pyDolarVenezuela.pages import BCV, CriptoDolar
-        from pyDolarVenezuela.monitor import Monitor
+        from pyDolarVenezuela import Monitor
 
         # 1. Obtener Tasa BCV (Dólar)
         monitor_bcv = Monitor(BCV, 'USD')
