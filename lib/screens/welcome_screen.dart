@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/services.dart' show SystemNavigator, rootBundle;
@@ -58,29 +59,41 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   }
 
   Future<void> _handlePermissionsAndInit() async {
-    // Request gallery permission
-    final bool galleryGranted = await Gal.requestAccess();
-    if (!galleryGranted && mounted) {
-      _showPermissionDeniedDialog('acceso a la galería');
+    // En Web omitimos los permisos nativos para evitar MissingPluginException
+    if (kIsWeb) {
+      _checkExistingUser();
       return;
     }
 
-    // Request notification permission (for Android 13+)
-    final FlutterLocalNotificationsPlugin notificationsPlugin =
-        FlutterLocalNotificationsPlugin();
-    final bool? notificationsGranted = await notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
+    try {
+      // Request gallery permission
+      final bool galleryGranted = await Gal.requestAccess();
+      if (!galleryGranted && mounted) {
+        _showPermissionDeniedDialog('acceso a la galería');
+        return;
+      }
 
-    if (notificationsGranted == false && mounted) {
-      _showPermissionDeniedDialog('notificaciones');
-      return;
+      // Request notification permission (for Android 13+)
+      final FlutterLocalNotificationsPlugin notificationsPlugin =
+          FlutterLocalNotificationsPlugin();
+      final bool? notificationsGranted = await notificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission();
+
+      if (notificationsGranted == false && mounted) {
+        _showPermissionDeniedDialog('notificaciones');
+        return;
+      }
+
+      // If all permissions are granted, proceed with the app flow.
+      _checkExistingUser();
+    } catch (e) {
+      debugPrint('Error verificando permisos: $e');
+      // En caso de error (ej. falta de configuración nativa o simulador), intentamos continuar
+      _checkExistingUser();
     }
-
-    // If all permissions are granted, proceed with the app flow.
-    _checkExistingUser();
   }
 
   void _showPermissionDeniedDialog(String permissionName) {
@@ -167,9 +180,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
   /// Guarda el nombre del usuario y navega a la pantalla principal.
   Future<void> _saveUserAndNavigate() async {
-    final name = _nameController.text.trim();
+    final rawName = _nameController.text.trim();
 
-    if (name.isEmpty) {
+    if (rawName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Por favor, introduce tu nombre'),
@@ -178,6 +191,15 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       );
       return;
     }
+
+    // Formatear nombre: Primera letra mayúscula, resto minúscula (Title Case)
+    final name = rawName
+        .split(' ')
+        .where((w) => w.isNotEmpty)
+        .map((word) {
+          return word[0].toUpperCase() + word.substring(1).toLowerCase();
+        })
+        .join(' ');
 
     setState(() {
       _isLoading = true;

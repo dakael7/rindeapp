@@ -381,9 +381,9 @@ class _SavingsScreenState extends State<SavingsScreen> {
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: _primaryGreen),
-                child: Text(
+                child: const Text(
                   'Guardar',
-                  style: const TextStyle(color: Color(0xFF071925)),
+                  style: TextStyle(color: Color(0xFF071925)),
                 ),
               ),
             ],
@@ -479,7 +479,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
+                              const Icon(
                                 Icons.rocket_launch_outlined,
                                 size: 60,
                                 color: Colors.white24,

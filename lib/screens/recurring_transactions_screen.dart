@@ -307,7 +307,7 @@ class _RecurringTransactionsScreenState
                         Switch(
                           value: item.active,
                           onChanged: (_) => _toggleActive(item),
-                          activeColor: _primaryGreen,
+                          activeThumbColor: _primaryGreen,
                           activeTrackColor: _primaryGreen.withOpacity(0.3),
                         ),
                       ],
@@ -490,7 +490,7 @@ class _RecurringFormState extends State<_RecurringForm> {
               style: GoogleFonts.poppins(color: Colors.white),
               decoration: InputDecoration(
                 labelText: 'Concepto (ej. Alquiler, Salario)',
-                labelStyle: TextStyle(color: Colors.white54),
+                labelStyle: const TextStyle(color: Colors.white54),
                 filled: true,
                 fillColor: cardColor,
                 border: OutlineInputBorder(
@@ -511,7 +511,7 @@ class _RecurringFormState extends State<_RecurringForm> {
                     style: GoogleFonts.poppins(color: Colors.white),
                     decoration: InputDecoration(
                       labelText: 'Monto',
-                      labelStyle: TextStyle(color: Colors.white54),
+                      labelStyle: const TextStyle(color: Colors.white54),
                       filled: true,
                       fillColor: cardColor,
                       border: OutlineInputBorder(
@@ -575,7 +575,7 @@ class _RecurringFormState extends State<_RecurringForm> {
                 ),
                 value: _isIndexed,
                 onChanged: (v) => setState(() => _isIndexed = v),
-                activeColor: primaryGreen,
+                activeThumbColor: primaryGreen,
               ),
 
             const SizedBox(height: 20),
@@ -633,7 +633,7 @@ class _RecurringFormState extends State<_RecurringForm> {
               )
             else if (_frequencyType == 'WEEKLY')
               DropdownButtonFormField<int>(
-                value: _frequencyValue > 7 ? 1 : _frequencyValue,
+                initialValue: _frequencyValue > 7 ? 1 : _frequencyValue,
                 dropdownColor: cardColor,
                 decoration: InputDecoration(
                   filled: true,
@@ -660,7 +660,7 @@ class _RecurringFormState extends State<_RecurringForm> {
                 style: GoogleFonts.poppins(color: Colors.white),
                 decoration: InputDecoration(
                   labelText: 'Cada cuántos días (ej. 15)',
-                  labelStyle: TextStyle(color: Colors.white54),
+                  labelStyle: const TextStyle(color: Colors.white54),
                   filled: true,
                   fillColor: cardColor,
                   border: OutlineInputBorder(

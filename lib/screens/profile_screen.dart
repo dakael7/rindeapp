@@ -5,6 +5,8 @@ import '../services/simple_storage_service.dart';
 import 'lock_screen.dart';
 import 'welcome_screen.dart';
 import 'settings_screen.dart';
+import 'privacy_policy_screen.dart';
+import 'terms_conditions_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String userName;
@@ -59,7 +61,7 @@ class ProfileScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: Icon(Icons.person, size: 50, color: textGrey),
+                    child: const Icon(Icons.person, size: 50, color: textGrey),
                   ),
                   const SizedBox(height: 16),
                   Text(
@@ -109,21 +111,27 @@ class ProfileScreen extends StatelessWidget {
               context,
               icon: Icons.description_outlined,
               title: 'Términos y Condiciones',
-              onTap: () => _showInfoDialog(
-                context,
-                'Términos y Condiciones',
-                'Aquí irían los términos legales de la aplicación...',
-              ),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TermsConditionsScreen(),
+                  ),
+                );
+              },
             ),
             _buildOptionTile(
               context,
               icon: Icons.privacy_tip_outlined,
               title: 'Políticas de Privacidad',
-              onTap: () => _showInfoDialog(
-                context,
-                'Políticas de Privacidad',
-                'Aquí iría la política de privacidad y manejo de datos...',
-              ),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PrivacyPolicyScreen(),
+                  ),
+                );
+              },
             ),
             _buildOptionTile(
               context,
@@ -231,26 +239,6 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  void _showInfoDialog(BuildContext context, String title, String content) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF132B3D),
-        title: Text(title, style: GoogleFonts.poppins(color: Colors.white)),
-        content: Text(
-          content,
-          style: GoogleFonts.poppins(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showLogoutDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -286,8 +274,9 @@ class ProfileScreen extends StatelessWidget {
                         const LockScreen(mode: LockMode.verify),
                   ),
                 );
-                if (authenticated != true)
+                if (authenticated != true) {
                   return; // Si cancela o falla, no cerrar sesión
+                }
               }
 
               final storage = SimpleStorageService();

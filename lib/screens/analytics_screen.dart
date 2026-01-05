@@ -253,7 +253,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         centerTitle: true,
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: primaryGreen))
+          ? const Center(child: CircularProgressIndicator(color: primaryGreen))
           : SingleChildScrollView(
               padding: const EdgeInsets.all(24.0),
               child: Column(

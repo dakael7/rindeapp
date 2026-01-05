@@ -112,9 +112,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Cargar Configuraciones
     _obscureBalances = prefs.getBool('obscure_balances') ?? false;
     final String defaultCurrency = prefs.getString('default_currency') ?? 'BCV';
-    if (_currentDisplayMode == 'BCV')
+    if (_currentDisplayMode == 'BCV') {
       _currentDisplayMode =
           defaultCurrency; // Aplicar default solo si no se ha cambiado manualmente en esta sesión (o lógica simple: siempre aplicar al cargar)
+    }
 
     final String? data = prefs.getString('transactions_data');
 
@@ -180,24 +181,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _updateRatesOnline() async {
-    final service = ExchangeRateService();
-    final newRates = await service.getRates();
+    try {
+      final service = ExchangeRateService();
+      final newRates = await service.getRates();
 
-    if (newRates != null && mounted) {
-      setState(() {
-        _rates['BCV'] = newRates['BCV']!;
-        _rates['USDT'] = newRates['USDT']!;
-        _rates['EURO'] = newRates['EURO']!;
-      });
+      if (newRates != null && mounted) {
+        setState(() {
+          _rates['BCV'] = newRates['BCV']!;
+          _rates['USDT'] = newRates['USDT']!;
+          _rates['EURO'] = newRates['EURO']!;
+        });
 
-      // Guardar persistencia
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setDouble('rate_bcv', newRates['BCV']!);
-      await prefs.setDouble('rate_usdt', newRates['USDT']!);
-      await prefs.setDouble('rate_euro', newRates['EURO']!);
+        // Guardar persistencia
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setDouble('rate_bcv', newRates['BCV']!);
+        await prefs.setDouble('rate_usdt', newRates['USDT']!);
+        await prefs.setDouble('rate_euro', newRates['EURO']!);
 
-      _saveRateHistory(newRates);
-      _calculatePendingPayments();
+        _saveRateHistory(newRates);
+        _calculatePendingPayments();
+      }
+    } catch (e) {
+      debugPrint('Error obteniendo tasas: $e');
     }
   }
 
@@ -337,6 +342,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (_currentDisplayMode == 'BCV') {
         _currentDisplayMode = 'USDT';
       } else if (_currentDisplayMode == 'USDT') {
+        _currentDisplayMode = 'EURO';
+      } else if (_currentDisplayMode == 'EURO') {
         if ((_rates['CUSTOM'] ?? 0) > 0) {
           _currentDisplayMode = 'CUSTOM';
         } else {
@@ -877,9 +884,9 @@ class _PendingPaymentsBanner extends StatelessWidget {
 
     if (displayMode != 'VES') {
       displayAmount = amountVES / (rate == 0 ? 1 : rate);
-      if (displayMode == 'EURO')
+      if (displayMode == 'EURO') {
         symbol = '€';
-      else if (displayMode == 'USDT')
+      } else if (displayMode == 'USDT')
         symbol = '₮';
       else
         symbol = '\$';
@@ -1075,8 +1082,8 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
               surface: Color(0xFF132B3D),
               onSurface: Colors.white,
             ),
-            dialogTheme: DialogThemeData(
-              backgroundColor: const Color(0xFF071925),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: Color(0xFF071925),
             ),
           ),
           child: child!,
@@ -1550,7 +1557,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
               fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
-            items: ['BCV', 'USDT', 'CUSTOM'].map((String value) {
+            items: ['BCV', 'USDT', 'EURO', 'CUSTOM'].map((String value) {
               String label = value;
               if (value == 'CUSTOM') label = 'Personalizada';
               return DropdownMenuItem<String>(value: value, child: Text(label));
@@ -1917,7 +1924,6 @@ class _BouncingWidget extends StatefulWidget {
   final VoidCallback? onTap;
   final double scaleFactor;
   final HitTestBehavior behavior;
-
   const _BouncingWidget({
     Key? key,
     required this.child,

@@ -457,9 +457,9 @@ class _DebtScreenState extends State<DebtScreen>
               _processPayment(debt);
             },
             style: ElevatedButton.styleFrom(backgroundColor: _primaryGreen),
-            child: Text(
+            child: const Text(
               'Confirmar',
-              style: const TextStyle(color: Color(0xFF071925)),
+              style: TextStyle(color: Color(0xFF071925)),
             ),
           ),
         ],
@@ -704,7 +704,7 @@ class _DebtFormState extends State<_DebtForm> {
               ),
               value: _hasInstallments,
               onChanged: (v) => setState(() => _hasInstallments = v),
-              activeColor: primaryGreen,
+              activeThumbColor: primaryGreen,
             ),
 
             if (_hasInstallments)
@@ -730,8 +730,9 @@ class _DebtFormState extends State<_DebtForm> {
               child: ElevatedButton(
                 onPressed: () {
                   if (_titleController.text.isEmpty ||
-                      _amountController.text.isEmpty)
+                      _amountController.text.isEmpty) {
                     return;
+                  }
 
                   widget.onSave(
                     DebtModel(

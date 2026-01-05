@@ -85,7 +85,7 @@ class _WalletScreenState extends State<WalletScreen> {
   List<Transaction> _transactions = [];
 
   // Tasas de cambio configurables (Valores por defecto)
-  Map<String, double> _currentRates = {
+  final Map<String, double> _currentRates = {
     'BCV': 52.5,
     'USDT': 54.2,
     'EURO': 56.1,
@@ -176,7 +176,7 @@ class _WalletScreenState extends State<WalletScreen> {
 
         // 2. Crear Transacción Real
         final newTx = Transaction(
-          id: 'AUTO_${DateTime.now().millisecondsSinceEpoch}_${executedCount}',
+          id: 'AUTO_${DateTime.now().millisecondsSinceEpoch}_$executedCount',
           title: '${item.title} (Auto)',
           originalAmount: item.isIndexed
               ? amountInVES
@@ -911,7 +911,7 @@ class _TransactionFormState extends State<_TransactionForm> {
                         Icons.keyboard_arrow_down,
                         color: Colors.white,
                       ),
-                      items: ['VES', 'USD'].map((String val) {
+                      items: ['VES', 'USD', 'EUR'].map((String val) {
                         return DropdownMenuItem(
                           value: val,
                           child: Text(
@@ -950,6 +950,7 @@ class _TransactionFormState extends State<_TransactionForm> {
                 children: [
                   _buildRateChip('BCV', widget.rates['BCV'] ?? 0),
                   _buildRateChip('USDT', widget.rates['USDT'] ?? 0),
+                  _buildRateChip('EURO', widget.rates['EURO'] ?? 0),
                   if ((widget.rates['CUSTOM'] ?? 0) > 0)
                     _buildRateChip('PERSONAL', widget.rates['CUSTOM'] ?? 0),
                   _buildRateChip('MANUAL', 0),

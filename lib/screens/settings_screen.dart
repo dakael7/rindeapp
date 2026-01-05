@@ -313,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: SwitchListTile(
         value: value,
         onChanged: onChanged,
-        activeColor: _primaryGreen,
+        activeThumbColor: _primaryGreen,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         secondary: Container(
           padding: const EdgeInsets.all(8),
