@@ -1,3 +1,20 @@
+import sys
+import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# Configuración CORS para permitir peticiones desde Flutter Web (cualquier origen)
+app.add_middleware(
+CORSMiddleware,
+allow_origins=["*"],
+allow_credentials=True,
+allow_methods=["*"],
+allow_headers=["*"],
+)
+
+
 @app.get("/rates")
 def get_rates():
     try:
