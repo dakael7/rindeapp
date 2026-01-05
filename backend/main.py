@@ -6,7 +6,6 @@ import uvicorn
 
 app = FastAPI()
 
-# Configuración CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,21 +16,23 @@ app.add_middleware(
 
 def clean_price(value):
     """
-    Función auxiliar para limpiar el precio sin importar cómo lo devuelva la librería.
-    Maneja strings como '50,12', 'Bs. 50.12' o floats directos.
+    Limpia el resultado independientemente de si pyDolarVenezuela 2.0.3
+    devuelve un string, un float, o un objeto con propiedad price.
     """
-    if isinstance(value, (int, float)):
-        return float(value)
-    
-    if isinstance(value, str):
-        # Eliminamos símbolos de moneda y espacios si existen
-        clean_val = value.replace('Bs.', '').replace(' ', '').strip()
-        # Cambiamos la coma decimal por punto (formato inglés para Python)
-        clean_val = clean_val.replace(',', '.')
-        try:
-            return float(clean_val)
-        except ValueError:
-            return 0.0
+    try:
+        # Si devuelve un diccionario (algunas sub-versiones lo hacen), intentamos sacar el precio
+        if isinstance(value, dict) and 'price' in value:
+            value = value['price']
+            
+        if isinstance(value, (int, float)):
+            return float(value)
+            
+        if isinstance(value, str):
+            # Limpia 'Bs.', espacios y cambia coma por punto
+            val = value.replace('Bs.', '').replace(' ', '').strip().replace(',', '.')
+            return float(val)
+    except Exception:
+        return 0.0
     return 0.0
 
 @app.get("/rates")
@@ -41,31 +42,26 @@ def get_rates():
         from pyDolarVenezuela import Monitor
 
         # 1. BCV Dólar
+        # En v2.0.3 se debe pasar el argumento que pide (type_monitor)
         monitor_bcv = Monitor(BCV, 'USD')
-        # RETIRADO: prettify=False (causaba el error)
-        datos_bcv_usd = monitor_bcv.get_value_monitors() 
-        bcv_rate = clean_price(datos_bcv_usd['bcv']['price'])
-
+        bcv_val = monitor_bcv.get_value_monitors(type_monitor='bcv')
+        
         # 2. BCV Euro
         monitor_euro = Monitor(BCV, 'EUR')
-        # RETIRADO: prettify=False
-        datos_bcv_eur = monitor_euro.get_value_monitors()
-        euro_rate = clean_price(datos_bcv_eur['bcv']['price'])
+        euro_val = monitor_euro.get_value_monitors(type_monitor='bcv')
 
-        # 3. USDT
+        # 3. USDT (Binance)
         monitor_cripto = Monitor(CriptoDolar, 'USD')
-        # RETIRADO: prettify=False
-        datos_cripto = monitor_cripto.get_value_monitors()
-        usdt_rate = clean_price(datos_cripto['binance']['price'])
+        usdt_val = monitor_cripto.get_value_monitors(type_monitor='binance')
 
         return {
-            "BCV": bcv_rate,
-            "EURO": euro_rate,
-            "USDT": usdt_rate,
-            "status": "success"
+            "BCV": clean_price(bcv_val),
+            "EURO": clean_price(euro_val),
+            "USDT": clean_price(usdt_val),
+            "status": "success",
+            "version_used": "2.0.3"
         }
-    except KeyError as e:
-        return {"error": f"Error de estructura de datos: {str(e)}", "status": "error"}
+
     except Exception as e:
         return {"error": str(e), "status": "error"}
 
