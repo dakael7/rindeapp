@@ -2,4 +2,4 @@ fastapi
 uvicorn
 requests
 curl_cffi
-pyDolarVenezuela>=2.1.0
+pyDolarVenezuela>=2.0.3
