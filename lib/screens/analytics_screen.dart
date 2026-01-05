@@ -5,9 +5,13 @@ import 'dart:math' as math;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../models/transaction_model.dart';
+import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
+import 'dart:ui' as ui;
 
 class AnalyticsScreen extends StatefulWidget {
-  const AnalyticsScreen({Key? key}) : super(key: key);
+  final bool showTutorial;
+  const AnalyticsScreen({Key? key, this.showTutorial = false})
+    : super(key: key);
 
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
@@ -31,10 +35,66 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   double _minBalance = 0.0;
   double _maxBalance = 1.0;
 
+  // --- Keys para Tutorial ---
+  final GlobalKey _filtersKey = GlobalKey();
+  final GlobalKey _chartKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     _loadData();
+    if (widget.showTutorial) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showTutorial());
+    }
+  }
+
+  void _showTutorial() {
+    TutorialCoachMark(
+      targets: [
+        TargetFocus(
+          identify: "Filtros",
+          keyTarget: _filtersKey,
+          contents: [
+            TargetContent(
+              align: ContentAlign.bottom,
+              builder: (context, controller) => _buildTutorialText(
+                "Filtros de Tiempo",
+                "Analiza tus finanzas por semana, mes o año. Toca aquí para cambiar el periodo visualizado.",
+              ),
+            ),
+          ],
+          shape: ShapeLightFocus.RRect,
+          radius: 10,
+        ),
+        TargetFocus(
+          identify: "Grafico",
+          keyTarget: _chartKey,
+          contents: [
+            TargetContent(
+              align: ContentAlign.top,
+              builder: (context, controller) => _buildTutorialText(
+                "Evolución Visual",
+                "Este gráfico te muestra cómo ha crecido (o disminuido) tu capital en el tiempo seleccionado.",
+              ),
+            ),
+          ],
+          shape: ShapeLightFocus.RRect,
+          radius: 20,
+        ),
+      ],
+      colorShadow: const Color(0xFF071925),
+      textSkip: "FINALIZAR",
+      paddingFocus: 10,
+      opacityShadow: 0.8,
+      imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+      onFinish: () => Navigator.pop(context), // Fin del tour
+      onSkip: () {
+        Navigator.pop(context);
+        return true;
+      },
+      onClickTarget: (target) {},
+      onClickOverlay: (target) {},
+    ).show(context: context);
   }
 
   Future<void> _loadData() async {
@@ -262,6 +322,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   // Filtros de Tiempo
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
+                    key: _filtersKey,
                     child: Row(
                       children: _periods.map((period) {
                         final isSelected = _selectedPeriod == period;
@@ -333,6 +394,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                   const SizedBox(height: 20),
                   Container(
+                    key: _chartKey,
                     height: 250,
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -353,6 +415,28 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildTutorialText(String title, String desc) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 24,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          desc,
+          style: GoogleFonts.poppins(color: Colors.white70, fontSize: 16),
+        ),
+      ],
     );
   }
 }

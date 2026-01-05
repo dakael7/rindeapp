@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import 'package:gal/gal.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/rendering.dart';
+import 'package:tutorial_coach_mark/tutorial_coach_mark.dart'; // Importar paquete
 import 'wallet_screen.dart'; // Asegúrate de que este archivo exista en la misma carpeta
 import 'rate_history_screen.dart';
 import 'analytics_screen.dart';
@@ -52,6 +53,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late Animation<Offset> _activitiesSlideAnimation;
   late Animation<double> _fadeAnimation;
 
+  // --- Keys para el Tutorial ---
+  final GlobalKey _headerKey = GlobalKey();
+  final GlobalKey _balanceKey = GlobalKey();
+  final GlobalKey _savingsKey = GlobalKey();
+  final GlobalKey _debtsKey = GlobalKey();
+  final GlobalKey _fabKey = GlobalKey();
+  final GlobalKey _walletTabKey = GlobalKey();
+  final GlobalKey _analyticsTabKey = GlobalKey();
+  final GlobalKey _profileTabKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -92,6 +103,173 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
 
     _entranceController.forward();
+
+    // Iniciar tutorial después de que la UI se renderice
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _checkAndShowTutorial(),
+    );
+  }
+
+  Future<void> _checkAndShowTutorial() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool seen = prefs.getBool('has_seen_tutorial_v1') ?? false;
+
+    if (!seen) {
+      // Pequeño delay para asegurar que las animaciones de entrada terminen
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _showTutorial();
+      });
+    }
+  }
+
+  void _showTutorial() {
+    TutorialCoachMark(
+      targets: _createTutorialTargets(),
+      colorShadow: const Color(0xFF071925),
+      textSkip: "OMITIR",
+      paddingFocus: 10,
+      opacityShadow: 0.8,
+      imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+      onSkip: () {
+        _markTutorialAsSeen();
+        return true;
+      },
+      onFinish: () {
+        // Al terminar Home, vamos a la Billetera para seguir el tour
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const WalletScreen(showTutorial: true),
+          ),
+        ).then((result) {
+          if (result == 'next') {
+            // Si viene de Billetera, vamos a Analíticas
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AnalyticsScreen(showTutorial: true),
+              ),
+            ).then((_) => _markTutorialAsSeen());
+          } else {
+            _markTutorialAsSeen();
+          }
+        });
+      },
+    ).show(context: context);
+  }
+
+  Future<void> _markTutorialAsSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('has_seen_tutorial_v1', true);
+  }
+
+  List<TargetFocus> _createTutorialTargets() {
+    return [
+      _buildTarget(
+        _headerKey,
+        "Tasas al Día",
+        "Aquí verás las tasas de cambio actualizadas (BCV, USDT, EURO). Toca el reloj para ver el historial completo.",
+        ContentAlign.bottom,
+      ),
+      _buildTarget(
+        _balanceKey,
+        "Tu Poder de Compra",
+        "Este es tu balance real indexado. Desliza hacia los lados para ver tu Inflación Personal y Metas.",
+        ContentAlign.bottom,
+      ),
+      _buildTarget(
+        _fabKey,
+        "Calculadora Rápida",
+        "Convierte divisas al instante y genera captures de pago con un solo toque.",
+        ContentAlign.top,
+      ),
+      _buildTarget(
+        _analyticsTabKey,
+        "Analíticas",
+        "Visualiza gráficos y estadísticas detalladas de tus finanzas.",
+        ContentAlign.top,
+      ),
+      _buildTarget(
+        _walletTabKey,
+        "Billetera",
+        "Registra tus ingresos y gastos aquí. El sistema calculará todo automáticamente en base a la tasa del día.",
+        ContentAlign.top,
+      ),
+      _buildTarget(
+        _profileTabKey,
+        "Perfil",
+        "Configura tu seguridad, copias de seguridad y datos personales.",
+        ContentAlign.top,
+      ),
+      _buildTarget(
+        _savingsKey,
+        "Metas de Ahorro",
+        "Define objetivos financieros y sigue tu progreso visualmente.",
+        ContentAlign.top,
+      ),
+      _buildTarget(
+        _debtsKey,
+        "Pagos Pendientes",
+        "Gestiona tus deudas y pagos recurrentes. RINDE te avisará cuando debas pagar.",
+        ContentAlign.top,
+      ),
+    ];
+  }
+
+  TargetFocus _buildTarget(
+    GlobalKey key,
+    String title,
+    String desc,
+    ContentAlign align,
+  ) {
+    return TargetFocus(
+      identify: title,
+      keyTarget: key,
+      alignSkip: Alignment.topRight,
+      contents: [
+        TargetContent(
+          align: align,
+          builder: (context, controller) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 24,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  desc,
+                  style: GoogleFonts.poppins(
+                    color: Colors.white70,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                if (align == ContentAlign.top) // Botón visual de siguiente
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      "Toca para continuar",
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFF4ADE80),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+      shape: ShapeLightFocus.RRect,
+      radius: 15,
+    );
   }
 
   /// Carga Balance y Movimientos de forma segura (previniendo errores de tipo)
@@ -475,7 +653,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     position: _headerSlideAnimation,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                      child: _Header(userName: widget.userName),
+                      child: _Header(
+                        key: _headerKey,
+                        userName: widget.userName,
+                      ),
                     ),
                   ),
 
@@ -485,6 +666,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   SlideTransition(
                     position: _carouselSlideAnimation,
                     child: _MainInfoCards(
+                      key: _balanceKey,
                       pageController: _pageController,
                       cardColor: cardColor,
                       primaryGreen: primaryGreen,
@@ -498,12 +680,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 30),
 
                   // 3. Mi Alcancía (Nueva Sección)
-                  _SavingsBanner(onTap: _openSavings),
+                  _SavingsBanner(key: _savingsKey, onTap: _openSavings),
 
                   const SizedBox(height: 20),
 
                   // 3.5 Pagos Pendientes
                   _PendingPaymentsBanner(
+                    key: _debtsKey,
                     count: _pendingCount,
                     amountVES: _pendingAmountVES,
                     rates: _rates,
@@ -554,6 +737,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ScaleTransition(
                   scale: _fadeAnimation,
                   child: FloatingActionButton(
+                    key: _fabKey,
                     onPressed: _showCalculatorSheet,
                     backgroundColor: cardColor,
                     elevation: 0,
@@ -569,8 +753,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-                _buildNavItem(2, Icons.wallet, primaryGreen, textGrey),
-                _buildNavItem(3, Icons.person_outline, primaryGreen, textGrey),
+                _buildNavItem(
+                  2,
+                  Icons.wallet,
+                  primaryGreen,
+                  textGrey,
+                  key: _walletTabKey,
+                ),
+                _buildNavItem(
+                  3,
+                  Icons.person_outline,
+                  primaryGreen,
+                  textGrey,
+                  key: _profileTabKey,
+                ),
               ],
             ),
           ),
@@ -583,10 +779,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     int index,
     IconData icon,
     Color selectedColor,
-    Color unselectedColor,
-  ) {
+    Color unselectedColor, {
+    Key? key,
+  }) {
     final isSelected = _selectedIndex == index;
     return _BouncingWidget(
+      key: key,
       onTap: () => _onItemTapped(index),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -781,8 +979,8 @@ class _RecentActivityList extends StatelessWidget {
 
 class _SavingsBanner extends StatelessWidget {
   final VoidCallback onTap;
-
-  const _SavingsBanner({required this.onTap});
+  // Key habilitada
+  const _SavingsBanner({Key? key, required this.onTap}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -867,13 +1065,15 @@ class _PendingPaymentsBanner extends StatelessWidget {
   final bool obscureBalances;
 
   const _PendingPaymentsBanner({
+    // Key habilitada
+    Key? key,
     required this.count,
     required this.amountVES,
     required this.rates,
     required this.displayMode,
     required this.onTap,
     required this.obscureBalances,
-  });
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -1256,18 +1456,26 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
     // Tasas base
     final bcv = _activeRates['BCV'] ?? 0.0;
     final usdt = _activeRates['USDT'] ?? 0.0;
+    final euro = _activeRates['EURO'] ?? 0.0;
 
     final bool isHistorical = _selectedDate != null;
     final Color dateColor = isHistorical ? const Color(0xFFFFC107) : textGrey;
 
-    return RepaintBoundary(
-      key: _globalKey,
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF0F2231),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        ),
-        padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+    // Cálculo de responsividad para el teclado
+    final double screenWidth = MediaQuery.of(context).size.width;
+    // Ancho disponible = Pantalla - Padding Horizontal (24*2) - Espaciado Grid (10*2)
+    final double availableWidth = screenWidth - 48 - 20;
+    final double itemWidth = availableWidth / 3;
+    final double itemHeight = 60.0; // Altura fija cómoda para los botones
+    final double childAspectRatio = itemWidth / itemHeight;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F2231),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+      child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1275,162 +1483,187 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
             Container(height: 4, width: 40, color: Colors.white24),
             const SizedBox(height: 20),
 
-            // Logo RINDE
-            Image.asset(
-              'assets/images/logo.png',
-              height: 40,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(height: 16),
+            // --- ÁREA DE CAPTURA (Solo el recibo) ---
+            RepaintBoundary(
+              key: _globalKey,
+              child: Container(
+                color: const Color(0xFF0F2231), // Fondo para la imagen
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  children: [
+                    // Logo RINDE
+                    Image.asset(
+                      'assets/images/logo.png',
+                      height: 40,
+                      fit: BoxFit.contain,
+                    ),
+                    const SizedBox(height: 16),
 
-            // Header: Tasas en vivo (Motor de Agregación)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                InkWell(
-                  onTap: _pickDate,
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isHistorical
-                          ? const Color(0xFFFFC107).withOpacity(0.1)
-                          : Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(12),
-                      border: isHistorical
-                          ? Border.all(
-                              color: const Color(0xFFFFC107).withOpacity(0.3),
-                            )
-                          : null,
-                    ),
-                    child: Row(
+                    // Header: Tasas en vivo
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.calendar_today, size: 12, color: dateColor),
-                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: _pickDate,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isHistorical
+                                  ? const Color(0xFFFFC107).withOpacity(0.1)
+                                  : Colors.white.withOpacity(0.05),
+                              borderRadius: BorderRadius.circular(12),
+                              border: isHistorical
+                                  ? Border.all(
+                                      color: const Color(
+                                        0xFFFFC107,
+                                      ).withOpacity(0.3),
+                                    )
+                                  : null,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.calendar_today,
+                                  size: 12,
+                                  color: dateColor,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  isHistorical
+                                      ? DateFormat(
+                                          'dd/MM/yy',
+                                        ).format(_selectedDate!)
+                                      : 'Hoy',
+                                  style: GoogleFonts.poppins(
+                                    color: dateColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
                         Text(
-                          isHistorical
-                              ? DateFormat('dd/MM/yy').format(_selectedDate!)
-                              : 'Hoy',
+                          'BCV: ${bcv.toStringAsFixed(2)}  |  USDT: ${usdt.toStringAsFixed(2)}  |  EUR: ${euro.toStringAsFixed(2)}',
                           style: GoogleFonts.poppins(
-                            color: dateColor,
+                            color: textGrey,
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'BCV: ${bcv.toStringAsFixed(2)}  |  USDT: ${usdt.toStringAsFixed(2)}',
-                  style: GoogleFonts.poppins(
-                    color: textGrey,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
+                    const SizedBox(height: 20),
 
-            // Input Principal
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Monto a convertir',
-                        style: GoogleFonts.poppins(
-                          color: textGrey,
-                          fontSize: 12,
-                        ),
-                      ),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          _amount.isEmpty ? '0' : _amount,
-                          style: GoogleFonts.poppins(
-                            color: Colors.white,
-                            fontSize: 48,
-                            fontWeight: FontWeight.bold,
-                            height: 1.1,
+                    // Input Principal
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Monto a convertir',
+                                style: GoogleFonts.poppins(
+                                  color: textGrey,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  _amount.isEmpty ? '0' : _amount,
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.white,
+                                    fontSize: 48,
+                                    fontWeight: FontWeight.bold,
+                                    height: 1.1,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Column(
-                  children: [
+                        const SizedBox(width: 16),
+                        Column(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: cardColor,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.white10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    _baseCurrency,
+                                    style: GoogleFonts.poppins(
+                                      color: primaryGreen,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  InkWell(
+                                    onTap: _toggleCurrency,
+                                    child: const Icon(
+                                      Icons.swap_vert,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Resultados
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         color: cardColor,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white10),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.05),
+                        ),
                       ),
-                      child: Row(
-                        children: [
-                          Text(
-                            _baseCurrency,
-                            style: GoogleFonts.poppins(
-                              color: primaryGreen,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          InkWell(
-                            onTap: _toggleCurrency,
-                            child: const Icon(
-                              Icons.swap_vert,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                        ],
+                      child: Column(
+                        children: _buildDynamicResults(val, primaryGreen),
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            // Resultados
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withOpacity(0.05)),
               ),
-              child: Column(children: _buildDynamicResults(val, primaryGreen)),
             ),
 
+            // --- FIN ÁREA DE CAPTURA ---
             const SizedBox(height: 24),
 
-            // Keypad
+            // Keypad (Fuera de la captura)
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: 12,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
-                childAspectRatio: 1.8,
+                childAspectRatio: childAspectRatio, // Ratio dinámico
                 mainAxisSpacing: 10,
                 crossAxisSpacing: 10,
               ),
@@ -1461,7 +1694,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
 
             const SizedBox(height: 24),
 
-            // Botón GUARDAR
+            // Botón GUARDAR (Fuera de la captura)
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -1474,7 +1707,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
                   ),
                 ),
                 child: Text(
-                  'GUARDAR',
+                  'GUARDAR IMAGEN',
                   style: GoogleFonts.poppins(
                     color: const Color(0xFF132B3D),
                     fontSize: 16,
@@ -1663,7 +1896,8 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
 
 class _Header extends StatelessWidget {
   final String userName;
-  const _Header({Key? key, required this.userName}) : super(key: key);
+  const _Header({Key? key, required this.userName})
+    : super(key: key); // Key habilitada
 
   @override
   Widget build(BuildContext context) {
@@ -1723,6 +1957,8 @@ class _MainInfoCards extends StatelessWidget {
   final bool obscureBalances;
 
   const _MainInfoCards({
+    // Key habilitada
+    Key? key,
     required this.pageController,
     required this.cardColor,
     required this.primaryGreen,
@@ -1730,7 +1966,7 @@ class _MainInfoCards extends StatelessWidget {
     required this.onToggleMode,
     required this.allHabitsDone,
     required this.obscureBalances,
-  });
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
