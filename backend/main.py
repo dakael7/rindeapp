@@ -1,8 +1,7 @@
 import sys
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydolarvenezuela.pages import BCV, CriptoDolar
-from pydolarvenezuela.monitor import Monitor
 
 app = FastAPI()
 
@@ -23,6 +22,10 @@ def health_check():
 @app.get("/rates")
 def get_rates():
     try:
+        # Importamos aquí para evitar errores al inicio si la librería tarda en cargar
+        from pydolarvenezuela.pages import BCV, CriptoDolar
+        from pydolarvenezuela.monitor import Monitor
+
         # 1. Obtener Tasa BCV (Dólar)
         monitor_bcv = Monitor(BCV, 'USD')
         bcv_rate = monitor_bcv.get_value_monitors(monitor_code='bcv', name_property='price', pretty=False)
@@ -46,3 +49,8 @@ def get_rates():
             "error": str(e),
             "status": "error"
         }
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
