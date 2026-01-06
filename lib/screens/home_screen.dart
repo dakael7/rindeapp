@@ -10,7 +10,8 @@ import 'dart:typed_data';
 import 'package:gal/gal.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/rendering.dart';
-import 'package:tutorial_coach_mark/tutorial_coach_mark.dart'; // Importar paquete
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 import 'wallet_screen.dart'; // Asegúrate de que este archivo exista en la misma carpeta
 import 'rate_history_screen.dart';
 import 'analytics_screen.dart';
@@ -67,13 +68,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late Animation<Offset> _activitiesSlideAnimation;
   late Animation<double> _fadeAnimation;
 
-  // --- Keys para el Tutorial ---
-  final GlobalKey _headerKey = GlobalKey();
-  final GlobalKey _balanceKey = GlobalKey();
-  final GlobalKey _savingsKey = GlobalKey();
-  final GlobalKey _debtsKey = GlobalKey();
-  final GlobalKey _fabKey = GlobalKey();
-  final GlobalKey _walletTabKey = GlobalKey();
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
@@ -116,162 +112,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     _entranceController.forward();
 
-    // Iniciar tutorial después de que la UI se renderice
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _checkAndShowTutorial(),
-    );
+    _initNotifications();
   }
 
-  Future<void> _checkAndShowTutorial() async {
-    final prefs = await SharedPreferences.getInstance();
-    final bool seen = prefs.getBool('has_seen_tutorial_v1') ?? false;
+  Future<void> _initNotifications() async {
+    tz.initializeTimeZones();
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initializationSettings =
+        InitializationSettings(android: initializationSettingsAndroid);
+    await _notificationsPlugin.initialize(initializationSettings);
 
-    if (!seen) {
-      // Pequeño delay para asegurar que las animaciones de entrada terminen
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) _showTutorial();
-      });
-    }
-  }
-
-  void _showTutorial() {
-    TutorialCoachMark(
-      targets: _createTutorialTargets(),
-      colorShadow: const Color(0xFF071925),
-      textSkip: "OMITIR",
-      paddingFocus: 10,
-      opacityShadow: 0.8,
-      imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-      onFinish: () {
-        // Al terminar Home, navegamos a la Billetera para continuar el tour
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const WalletScreen(showTutorial: true),
-          ),
-        ).then((result) {
-          if (result == 'next') {
-            // Si viene de Billetera, vamos a Analíticas
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const AnalyticsScreen(showTutorial: true),
-              ),
-            ).then((_) => _markTutorialAsSeen());
-          } else {
-            _markTutorialAsSeen();
-          }
-        });
-      },
-      onSkip: () {
-        _markTutorialAsSeen();
-        return true;
-      },
-      onClickTarget: (target) {},
-      onClickOverlay: (target) {},
-    ).show(context: context);
-  }
-
-  Future<void> _markTutorialAsSeen() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('has_seen_tutorial_v1', true);
-  }
-
-  List<TargetFocus> _createTutorialTargets() {
-    return [
-      _buildTarget(
-        _headerKey,
-        "Tasas al Día",
-        "Aquí verás las tasas de cambio actualizadas (BCV, USDT, EURO). Toca el reloj para ver el historial completo.",
-        ContentAlign.bottom,
-      ),
-      _buildTarget(
-        _balanceKey,
-        "Tu Poder de Compra",
-        "Este es tu balance real indexado. Desliza hacia los lados para ver tu Inflación Personal y Metas.",
-        ContentAlign.bottom,
-      ),
-      _buildTarget(
-        _fabKey,
-        "Calculadora Rápida",
-        "Convierte divisas al instante y genera captures de pago con un solo toque.",
-        ContentAlign.top,
-      ),
-      _buildTarget(
-        _walletTabKey,
-        "Billetera",
-        "Registra tus ingresos y gastos aquí. El sistema calculará todo automáticamente en base a la tasa del día.",
-        ContentAlign.top,
-      ),
-      _buildTarget(
-        _savingsKey,
-        "Metas de Ahorro",
-        "Define objetivos financieros y sigue tu progreso visualmente.",
-        ContentAlign.top,
-      ),
-      _buildTarget(
-        _debtsKey,
-        "Pagos Pendientes",
-        "Gestiona tus deudas y pagos recurrentes. RINDE te avisará cuando debas pagar.",
-        ContentAlign.top,
-      ),
-    ];
-  }
-
-  TargetFocus _buildTarget(
-    GlobalKey key,
-    String title,
-    String desc,
-    ContentAlign align,
-  ) {
-    return TargetFocus(
-      identify: title,
-      keyTarget: key,
-      alignSkip: Alignment.topRight,
-      contents: [
-        TargetContent(
-          align: align,
-          builder: (context, controller) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 24,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  desc,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white70,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                if (align == ContentAlign.top) // Botón visual de siguiente
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      "Toca para continuar",
-                      style: GoogleFonts.poppins(
-                        color: const Color(0xFF4ADE80),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
-      ],
-      shape: ShapeLightFocus.RRect,
-      radius: 15,
-    );
+    // Solicitar permisos (Android 13+)
+    await _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.requestNotificationsPermission();
   }
 
   /// Carga Balance y Movimientos de forma segura (previniendo errores de tipo)
@@ -710,10 +567,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     position: _headerSlideAnimation,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                      child: _Header(
-                        key: _headerKey,
-                        userName: widget.userName,
-                      ),
+                      child: _Header(userName: widget.userName),
                     ),
                   ),
 
@@ -723,7 +577,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   SlideTransition(
                     position: _carouselSlideAnimation,
                     child: _MainInfoCards(
-                      key: _balanceKey,
                       pageController: _pageController,
                       cardColor: cardColor,
                       primaryGreen: primaryGreen,
@@ -744,13 +597,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 30),
 
                   // 3. Mi Alcancía (Nueva Sección)
-                  _SavingsBanner(key: _savingsKey, onTap: _openSavings),
+                  _SavingsBanner(onTap: _openSavings),
 
                   const SizedBox(height: 20),
 
                   // 3.5 Pagos Pendientes
                   _PendingPaymentsBanner(
-                    key: _debtsKey,
                     count: _pendingCount,
                     amountVES: _pendingAmountVES,
                     rates: _rates,
@@ -812,7 +664,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ],
                     ),
                     child: FloatingActionButton(
-                      key: _fabKey,
                       onPressed: _showCalculatorSheet,
                       backgroundColor: cardColor,
                       elevation: 0,
@@ -834,13 +685,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-                _buildNavItem(
-                  2,
-                  Icons.wallet,
-                  primaryGreen,
-                  textGrey,
-                  key: _walletTabKey,
-                ),
+                _buildNavItem(2, Icons.wallet, primaryGreen, textGrey),
                 _buildNavItem(3, Icons.person_outline, primaryGreen, textGrey),
               ],
             ),
@@ -1374,7 +1219,16 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
     const InitializationSettings initializationSettings =
         InitializationSettings(android: initializationSettingsAndroid);
 
-    await _notificationsPlugin.initialize(initializationSettings);
+    await _notificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        try {
+          await Gal.open();
+        } catch (e) {
+          debugPrint('Error abriendo galería: $e');
+        }
+      },
+    );
 
     // Solicitar permiso en Android 13+
     await _notificationsPlugin
@@ -1405,7 +1259,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
     await _notificationsPlugin.show(
       0,
       'RINDE',
-      'Se ha guardado en galería',
+      'Imagen guardada. Toca para ver en galería.',
       notificationDetails,
     );
   }
@@ -1434,6 +1288,7 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
 
     final DateTime? picked = await showDatePicker(
       context: context,
+      locale: const Locale('es', 'ES'),
       initialDate: _selectedDate ?? now,
       firstDate: DateTime(2020),
       lastDate: now,
@@ -1557,18 +1412,10 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
       bool hasAccess = await Gal.hasAccess();
       if (!hasAccess) {
         hasAccess = await Gal.requestAccess();
-        if (!hasAccess) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Se requiere acceso a la galería'),
-                backgroundColor: Color(0xFFFF5252),
-              ),
-            );
-          }
-          return;
-        }
       }
+
+      // Esperar un momento para asegurar renderizado y evitar imágenes en blanco
+      await Future.delayed(const Duration(milliseconds: 100));
 
       HapticFeedback.mediumImpact();
       if (_globalKey.currentContext == null) return;
@@ -1596,6 +1443,19 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
           );
 
           if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Text('Guardado en Galería', style: GoogleFonts.poppins()),
+                  ],
+                ),
+                backgroundColor: const Color(0xFF4ADE80),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
             _showSuccessNotification();
           }
         } catch (e) {

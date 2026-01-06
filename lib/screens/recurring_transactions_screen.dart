@@ -3,13 +3,16 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 // Modelo de Transacción Recurrente
 class RecurringTransaction {
   String id;
   String title;
   double amount;
-  String currency; // 'VES', 'USD', 'EUR'
+  String currency; // 'VES', 'USD', 'EUR', 'USD_CASH'
+  String rateType; // 'BCV', 'USDT', 'EURO'
   bool isIndexed; // Si es true, se registra en VES calculado a la tasa
   bool isExpense;
   String frequencyType; // 'DAYS', 'WEEKLY', 'MONTHLY'
@@ -17,18 +20,21 @@ class RecurringTransaction {
   frequencyValue; // Intervalo de días, Día de la semana (1-7), o Día del mes (1-31)
   DateTime nextExecution;
   bool active;
+  bool notificationsEnabled;
 
   RecurringTransaction({
     required this.id,
     required this.title,
     required this.amount,
     required this.currency,
+    this.rateType = 'BCV',
     required this.isIndexed,
     required this.isExpense,
     required this.frequencyType,
     required this.frequencyValue,
     required this.nextExecution,
     this.active = true,
+    this.notificationsEnabled = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -36,12 +42,14 @@ class RecurringTransaction {
     'title': title,
     'amount': amount,
     'currency': currency,
+    'rateType': rateType,
     'isIndexed': isIndexed,
     'isExpense': isExpense,
     'frequencyType': frequencyType,
     'frequencyValue': frequencyValue,
     'nextExecution': nextExecution.toIso8601String(),
     'active': active,
+    'notificationsEnabled': notificationsEnabled,
   };
 
   factory RecurringTransaction.fromJson(Map<String, dynamic> json) =>
@@ -50,12 +58,14 @@ class RecurringTransaction {
         title: json['title'],
         amount: (json['amount'] ?? 0).toDouble(),
         currency: json['currency'] ?? 'VES',
+        rateType: json['rateType'] ?? 'BCV',
         isIndexed: json['isIndexed'] ?? false,
         isExpense: json['isExpense'] ?? true,
         frequencyType: json['frequencyType'] ?? 'MONTHLY',
         frequencyValue: json['frequencyValue'] ?? 1,
         nextExecution: DateTime.parse(json['nextExecution']),
         active: json['active'] ?? true,
+        notificationsEnabled: json['notificationsEnabled'] ?? false,
       );
 }
 
@@ -76,6 +86,8 @@ class _RecurringTransactionsScreenState
 
   List<RecurringTransaction> _items = [];
   bool _isLoading = true;
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
@@ -99,6 +111,46 @@ class _RecurringTransactionsScreenState
     final prefs = await SharedPreferences.getInstance();
     final String encoded = jsonEncode(_items.map((e) => e.toJson()).toList());
     await prefs.setString('recurring_transactions', encoded);
+    _scheduleAllNotifications();
+  }
+
+  Future<void> _scheduleAllNotifications() async {
+    await _notificationsPlugin
+        .cancelAll(); // Limpiar anteriores para evitar duplicados
+    for (var item in _items) {
+      if (item.active && item.notificationsEnabled) {
+        _scheduleNotificationForItem(item);
+      }
+    }
+  }
+
+  Future<void> _scheduleNotificationForItem(RecurringTransaction item) async {
+    final now = DateTime.now();
+    if (item.nextExecution.isBefore(now)) return;
+
+    final daysBefore = [5, 3, 1];
+    for (int days in daysBefore) {
+      final scheduledDate = item.nextExecution.subtract(Duration(days: days));
+      if (scheduledDate.isAfter(now)) {
+        await _notificationsPlugin.zonedSchedule(
+          item.id.hashCode + days, // ID único
+          'Pago Próximo: ${item.title}',
+          'Tu pago de ${item.currency} ${item.amount} vence en $days días.',
+          tz.TZDateTime.from(scheduledDate, tz.local),
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'recurring_channel',
+              'Pagos Recurrentes',
+              importance: Importance.max,
+              priority: Priority.high,
+            ),
+          ),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      }
+    }
   }
 
   void _toggleActive(RecurringTransaction item) {
@@ -301,8 +353,24 @@ class _RecurringTransactionsScreenState
                                     ),
                                 ],
                               ),
+                              if (item.currency != 'VES' &&
+                                  item.currency != 'USD_CASH')
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4.0),
+                                  child: Text(
+                                    'Tasa: ${item.rateType}',
+                                    style: GoogleFonts.poppins(
+                                      color: Colors.white54,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.white),
+                          onPressed: () => _openForm(existingItem: item),
                         ),
                         Switch(
                           value: item.active,
@@ -348,9 +416,11 @@ class _RecurringFormState extends State<_RecurringForm> {
 
   bool _isExpense = true;
   String _currency = 'USD';
+  String _rateType = 'BCV';
   bool _isIndexed = false;
   String _frequencyType = 'MONTHLY';
   int _frequencyValue = 1; // Default day 1
+  bool _notificationsEnabled = false;
 
   @override
   void initState() {
@@ -361,9 +431,11 @@ class _RecurringFormState extends State<_RecurringForm> {
       _amountController.text = item.amount.toString();
       _isExpense = item.isExpense;
       _currency = item.currency;
+      _rateType = item.rateType;
       _isIndexed = item.isIndexed;
       _frequencyType = item.frequencyType;
       _frequencyValue = item.frequencyValue;
+      _notificationsEnabled = item.notificationsEnabled;
     } else {
       // Default to today's day for monthly
       _frequencyValue = DateTime.now().day;
@@ -409,12 +481,14 @@ class _RecurringFormState extends State<_RecurringForm> {
       title: _titleController.text,
       amount: double.tryParse(_amountController.text) ?? 0.0,
       currency: _currency,
+      rateType: _rateType,
       isIndexed: _isIndexed,
       isExpense: _isExpense,
       frequencyType: _frequencyType,
       frequencyValue: _frequencyValue,
       nextExecution: _calculateNextExecution(),
       active: true,
+      notificationsEnabled: _notificationsEnabled,
     );
 
     widget.onSave(item);
@@ -534,7 +608,7 @@ class _RecurringFormState extends State<_RecurringForm> {
                       child: DropdownButton<String>(
                         value: _currency,
                         dropdownColor: cardColor,
-                        items: ['VES', 'USD']
+                        items: ['VES', 'USD', 'EUR', 'USD_CASH']
                             .map(
                               (e) => DropdownMenuItem(
                                 value: e,
@@ -549,7 +623,8 @@ class _RecurringFormState extends State<_RecurringForm> {
                             .toList(),
                         onChanged: (v) => setState(() {
                           _currency = v!;
-                          if (_currency == 'VES') _isIndexed = false;
+                          if (_currency == 'VES' || _currency == 'USD_CASH')
+                            _isIndexed = false;
                         }),
                       ),
                     ),
@@ -558,8 +633,38 @@ class _RecurringFormState extends State<_RecurringForm> {
               ],
             ),
 
+            // Selector de Tasa (Solo si no es VES ni CASH)
+            if (_currency != 'VES' && _currency != 'USD_CASH') ...[
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _rateType,
+                dropdownColor: cardColor,
+                decoration: InputDecoration(
+                  labelText: 'Tasa de Cambio',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  filled: true,
+                  fillColor: cardColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                items: ['BCV', 'USDT', 'EURO']
+                    .map(
+                      (e) => DropdownMenuItem(
+                        value: e,
+                        child: Text(
+                          e,
+                          style: GoogleFonts.poppins(color: Colors.white),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => _rateType = v!),
+              ),
+            ],
+
             // Opción Indexado (Solo si no es VES)
-            if (_currency != 'VES')
+            if (_currency != 'VES' && _currency != 'USD_CASH')
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(
@@ -671,6 +776,17 @@ class _RecurringFormState extends State<_RecurringForm> {
                     setState(() => _frequencyValue = int.tryParse(v) ?? 1),
               ),
 
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: Text(
+                'Notificarme (5, 3 y 1 día antes)',
+                style: GoogleFonts.poppins(color: Colors.white),
+              ),
+              value: _notificationsEnabled,
+              activeColor: primaryGreen,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (val) => setState(() => _notificationsEnabled = val),
+            ),
             const SizedBox(height: 30),
             SizedBox(
               width: double.infinity,

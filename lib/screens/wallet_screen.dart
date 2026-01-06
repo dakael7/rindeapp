@@ -5,8 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'recurring_transactions_screen.dart';
 import 'debt_screen.dart';
-import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
-import 'dart:ui' as ui;
 
 // ==========================================
 // MODELO DE DATOS ACTUALIZADO (Algoritmo Generalizado)
@@ -98,8 +96,7 @@ class Transaction {
 // ==========================================
 
 class WalletScreen extends StatefulWidget {
-  final bool showTutorial;
-  const WalletScreen({Key? key, this.showTutorial = false}) : super(key: key);
+  const WalletScreen({Key? key}) : super(key: key);
 
   @override
   State<WalletScreen> createState() => _WalletScreenState();
@@ -133,11 +130,6 @@ class _WalletScreenState extends State<WalletScreen> {
   };
 
   bool _isLoading = true;
-
-  // --- Keys para Tutorial ---
-  final GlobalKey _balanceCardKey = GlobalKey();
-  final GlobalKey _listKey = GlobalKey();
-  final GlobalKey _fabKey = GlobalKey();
 
   bool get _hasActiveFilters =>
       _selectedCategoryFilter != null ||
@@ -187,58 +179,6 @@ class _WalletScreenState extends State<WalletScreen> {
     super.initState();
     _loadData();
     _checkRecurringTransactions();
-
-    if (widget.showTutorial) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _showTutorial());
-    }
-  }
-
-  void _showTutorial() {
-    TutorialCoachMark(
-      targets: [
-        TargetFocus(
-          identify: "Balance",
-          keyTarget: _balanceCardKey,
-          contents: [
-            TargetContent(
-              align: ContentAlign.bottom,
-              builder: (context, controller) => _buildTutorialText(
-                "Detalle Total",
-                "Aquí ves el desglose completo de tu dinero. El monto grande es tu proyección en Divisas, y abajo ves la base real en Bolívares.",
-              ),
-            ),
-          ],
-          shape: ShapeLightFocus.RRect,
-          radius: 20,
-        ),
-        TargetFocus(
-          identify: "Registrar",
-          keyTarget: _fabKey,
-          contents: [
-            TargetContent(
-              align: ContentAlign.top,
-              builder: (context, controller) => _buildTutorialText(
-                "Nuevo Movimiento",
-                "Toca aquí para registrar ingresos o gastos. Puedes especificar la moneda original y la tasa, RINDE hará el resto.",
-              ),
-            ),
-          ],
-          shape: ShapeLightFocus.Circle,
-        ),
-      ],
-      colorShadow: const Color(0xFF071925),
-      textSkip: "OMITIR",
-      paddingFocus: 10,
-      opacityShadow: 0.8,
-      imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-      onFinish: () => Navigator.pop(context, 'next'), // Continuar a Analíticas
-      onSkip: () {
-        Navigator.pop(context, 'skip'); // Cancelar tour
-        return true;
-      },
-      onClickTarget: (target) {},
-      onClickOverlay: (target) {},
-    ).show(context: context);
   }
 
   /// Carga datos y configuración
@@ -326,8 +266,9 @@ class _WalletScreenState extends State<WalletScreen> {
             rateUsed = 1.0;
             rateType = 'CASH';
           } else {
-            rateUsed = _currentRates['BCV'] ?? 52.5;
-            rateType = 'BCV';
+            // Usar la tasa configurada en la programación
+            rateType = item.rateType;
+            rateUsed = _currentRates[rateType] ?? _currentRates['BCV'] ?? 52.5;
           }
 
           if (item.isIndexed) {
@@ -675,6 +616,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   onTap: () async {
                     final picked = await showDateRangePicker(
                       context: context,
+                      locale: const Locale('es', 'ES'),
                       firstDate: DateTime(2020),
                       lastDate: DateTime.now().add(const Duration(days: 365)),
                       initialDateRange: _selectedDateRange,
@@ -903,7 +845,7 @@ class _WalletScreenState extends State<WalletScreen> {
           ? Center(child: CircularProgressIndicator(color: _primaryGreen))
           : Column(
               children: [
-                Container(key: _balanceCardKey, child: _buildBalanceCard()),
+                Container(child: _buildBalanceCard()),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 16, 24, 10),
                   child: TextField(
@@ -959,7 +901,6 @@ class _WalletScreenState extends State<WalletScreen> {
           const SizedBox(width: 16),
           FloatingActionButton.extended(
             heroTag: 'registerBtn',
-            key: _fabKey,
             onPressed: _openTransactionForm,
             backgroundColor: _primaryGreen,
             icon: const Icon(Icons.add, color: Color(0xFF132B3D)),
@@ -1218,28 +1159,6 @@ class _WalletScreenState extends State<WalletScreen> {
           Text(msg, style: GoogleFonts.poppins(color: _textGrey)),
         ],
       ),
-    );
-  }
-
-  Widget _buildTutorialText(String title, String desc) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 24,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          desc,
-          style: GoogleFonts.poppins(color: Colors.white70, fontSize: 16),
-        ),
-      ],
     );
   }
 

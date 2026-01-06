@@ -3,28 +3,34 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 class DebtModel {
   String id;
   String title;
   double totalAmount;
   String currency;
+  String rateType; // 'BCV', 'USDT', 'EURO'
   bool isExpense; // true = Deuda (Pagar), false = Cobro (Recibir)
   DateTime nextDate;
   int totalInstallments;
   int paidInstallments;
   bool isCompleted;
+  bool notificationsEnabled;
 
   DebtModel({
     required this.id,
     required this.title,
     required this.totalAmount,
     required this.currency,
+    this.rateType = 'BCV',
     required this.isExpense,
     required this.nextDate,
     this.totalInstallments = 1,
     this.paidInstallments = 0,
     this.isCompleted = false,
+    this.notificationsEnabled = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -32,11 +38,13 @@ class DebtModel {
     'title': title,
     'totalAmount': totalAmount,
     'currency': currency,
+    'rateType': rateType,
     'isExpense': isExpense,
     'nextDate': nextDate.toIso8601String(),
     'totalInstallments': totalInstallments,
     'paidInstallments': paidInstallments,
     'isCompleted': isCompleted,
+    'notificationsEnabled': notificationsEnabled,
   };
 
   factory DebtModel.fromJson(Map<String, dynamic> json) => DebtModel(
@@ -44,11 +52,13 @@ class DebtModel {
     title: json['title'],
     totalAmount: (json['totalAmount'] ?? 0).toDouble(),
     currency: json['currency'] ?? 'USD',
+    rateType: json['rateType'] ?? 'BCV',
     isExpense: json['isExpense'] ?? true,
     nextDate: DateTime.parse(json['nextDate']),
     totalInstallments: json['totalInstallments'] ?? 1,
     paidInstallments: json['paidInstallments'] ?? 0,
     isCompleted: json['isCompleted'] ?? false,
+    notificationsEnabled: json['notificationsEnabled'] ?? false,
   );
 }
 
@@ -71,6 +81,10 @@ class _DebtScreenState extends State<DebtScreen>
   List<DebtModel> _debts = [];
   bool _isLoading = true;
   double _currentBCV = 52.5; // Valor por defecto, se actualizará
+  double _currentUSDT = 54.2;
+  double _currentEURO = 56.1;
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
@@ -84,6 +98,8 @@ class _DebtScreenState extends State<DebtScreen>
 
     // Cargar Tasa BCV para cálculos
     _currentBCV = prefs.getDouble('rate_bcv') ?? 52.5;
+    _currentUSDT = prefs.getDouble('rate_usdt') ?? 54.2;
+    _currentEURO = prefs.getDouble('rate_euro') ?? 56.1;
 
     final String? data = prefs.getString('debts_data');
     if (data != null) {
@@ -101,6 +117,49 @@ class _DebtScreenState extends State<DebtScreen>
     final prefs = await SharedPreferences.getInstance();
     final String encoded = jsonEncode(_debts.map((e) => e.toJson()).toList());
     await prefs.setString('debts_data', encoded);
+    _scheduleAllNotifications();
+  }
+
+  Future<void> _scheduleAllNotifications() async {
+    for (var item in _debts) {
+      if (!item.isCompleted && item.notificationsEnabled) {
+        _scheduleNotificationForItem(item);
+      } else {
+        // Cancelar si se completó o desactivó
+        _notificationsPlugin.cancel(item.id.hashCode + 1);
+        _notificationsPlugin.cancel(item.id.hashCode + 3);
+        _notificationsPlugin.cancel(item.id.hashCode + 5);
+      }
+    }
+  }
+
+  Future<void> _scheduleNotificationForItem(DebtModel item) async {
+    final now = DateTime.now();
+    if (item.nextDate.isBefore(now)) return;
+
+    final daysBefore = [5, 3, 1];
+    for (int days in daysBefore) {
+      final scheduledDate = item.nextDate.subtract(Duration(days: days));
+      if (scheduledDate.isAfter(now)) {
+        await _notificationsPlugin.zonedSchedule(
+          item.id.hashCode + days,
+          'Recordatorio de Deuda: ${item.title}',
+          'Vence en $days días. Monto: ${item.currency} ${item.totalAmount}',
+          tz.TZDateTime.from(scheduledDate, tz.local),
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'debt_channel',
+              'Deudas y Pagos',
+              importance: Importance.max,
+              priority: Priority.high,
+            ),
+          ),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      }
+    }
   }
 
   // Registra el pago en la Wallet y actualiza la deuda
@@ -115,9 +174,20 @@ class _DebtScreenState extends State<DebtScreen>
     double rateUsed = 1.0;
     String rateType = 'N/A';
 
-    if (debt.currency != 'VES') {
-      rateUsed = _currentBCV;
-      rateType = 'BCV';
+    if (debt.currency == 'USD_CASH') {
+      rateUsed = 1.0;
+      rateType = 'CASH';
+      amountInVES = installmentAmount;
+    } else if (debt.currency != 'VES') {
+      rateType = debt.rateType;
+      if (rateType == 'USDT') {
+        rateUsed = _currentUSDT;
+      } else if (rateType == 'EURO') {
+        rateUsed = _currentEURO;
+      } else {
+        rateUsed = _currentBCV;
+      }
+
       amountInVES = installmentAmount * rateUsed;
     }
 
@@ -177,15 +247,21 @@ class _DebtScreenState extends State<DebtScreen>
     _saveDebts();
   }
 
-  void _openForm() {
+  void _openForm({DebtModel? existingItem}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _DebtForm(
-        onSave: (newDebt) {
+        existingItem: existingItem,
+        onSave: (item) {
           setState(() {
-            _debts.add(newDebt);
+            if (existingItem != null) {
+              final index = _debts.indexWhere((e) => e.id == existingItem.id);
+              if (index != -1) _debts[index] = item;
+            } else {
+              _debts.add(item);
+            }
             _debts.sort((a, b) => a.nextDate.compareTo(b.nextDate));
           });
           _saveDebts();
@@ -356,6 +432,10 @@ class _DebtScreenState extends State<DebtScreen>
                     ],
                   ),
                 ),
+                IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.white),
+                  onPressed: () => _openForm(existingItem: debt),
+                ),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -373,6 +453,17 @@ class _DebtScreenState extends State<DebtScreen>
                     ),
                   ),
                 ),
+                if (debt.currency != 'VES' && debt.currency != 'USD_CASH')
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Tasa: ${debt.rateType}',
+                      style: GoogleFonts.poppins(
+                        color: _textGrey,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 16),
@@ -469,9 +560,10 @@ class _DebtScreenState extends State<DebtScreen>
 }
 
 class _DebtForm extends StatefulWidget {
+  final DebtModel? existingItem;
   final Function(DebtModel) onSave;
 
-  const _DebtForm({required this.onSave});
+  const _DebtForm({this.existingItem, required this.onSave});
 
   @override
   State<_DebtForm> createState() => _DebtFormState();
@@ -484,8 +576,27 @@ class _DebtFormState extends State<_DebtForm> {
 
   bool _isExpense = true;
   String _currency = 'USD';
+  String _rateType = 'BCV';
   DateTime _selectedDate = DateTime.now().add(const Duration(days: 7));
   bool _hasInstallments = false;
+  bool _notificationsEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.existingItem != null) {
+      final item = widget.existingItem!;
+      _titleController.text = item.title;
+      _amountController.text = item.totalAmount.toString();
+      _installmentsController.text = item.totalInstallments.toString();
+      _isExpense = item.isExpense;
+      _currency = item.currency;
+      _rateType = item.rateType;
+      _selectedDate = item.nextDate;
+      _hasInstallments = item.totalInstallments > 1;
+      _notificationsEnabled = item.notificationsEnabled;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -518,7 +629,9 @@ class _DebtFormState extends State<_DebtForm> {
               ),
             ),
             Text(
-              'Nueva Programación',
+              widget.existingItem == null
+                  ? 'Nueva Programación'
+                  : 'Editar Programación',
               style: GoogleFonts.poppins(
                 color: Colors.white,
                 fontSize: 20,
@@ -625,7 +738,7 @@ class _DebtFormState extends State<_DebtForm> {
                       child: DropdownButton<String>(
                         value: _currency,
                         dropdownColor: cardColor,
-                        items: ['VES', 'USD']
+                        items: ['VES', 'USD', 'USD_CASH']
                             .map(
                               (e) => DropdownMenuItem(
                                 value: e,
@@ -647,11 +760,42 @@ class _DebtFormState extends State<_DebtForm> {
             ),
             const SizedBox(height: 16),
 
+            // Selector de Tasa (Solo si no es VES ni CASH)
+            if (_currency != 'VES' && _currency != 'USD_CASH') ...[
+              DropdownButtonFormField<String>(
+                value: _rateType,
+                dropdownColor: cardColor,
+                decoration: InputDecoration(
+                  labelText: 'Tasa de Cambio',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  filled: true,
+                  fillColor: cardColor,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                items: ['BCV', 'USDT', 'EURO']
+                    .map(
+                      (e) => DropdownMenuItem(
+                        value: e,
+                        child: Text(
+                          e,
+                          style: GoogleFonts.poppins(color: Colors.white),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => _rateType = v!),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Fecha
             InkWell(
               onTap: () async {
                 final picked = await showDatePicker(
                   context: context,
+                  locale: const Locale('es', 'ES'),
                   initialDate: _selectedDate,
                   firstDate: DateTime.now(),
                   lastDate: DateTime(2030),
@@ -692,6 +836,17 @@ class _DebtFormState extends State<_DebtForm> {
                   ],
                 ),
               ),
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: Text(
+                'Notificarme (5, 3 y 1 día antes)',
+                style: GoogleFonts.poppins(color: Colors.white),
+              ),
+              value: _notificationsEnabled,
+              activeColor: primaryGreen,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (val) => setState(() => _notificationsEnabled = val),
             ),
             const SizedBox(height: 16),
 
@@ -736,15 +891,22 @@ class _DebtFormState extends State<_DebtForm> {
 
                   widget.onSave(
                     DebtModel(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(),
+                      id:
+                          widget.existingItem?.id ??
+                          DateTime.now().millisecondsSinceEpoch.toString(),
                       title: _titleController.text,
                       totalAmount: double.tryParse(_amountController.text) ?? 0,
                       currency: _currency,
+                      rateType: _rateType,
                       isExpense: _isExpense,
                       nextDate: _selectedDate,
                       totalInstallments: _hasInstallments
                           ? (int.tryParse(_installmentsController.text) ?? 1)
                           : 1,
+                      paidInstallments:
+                          widget.existingItem?.paidInstallments ?? 0,
+                      isCompleted: widget.existingItem?.isCompleted ?? false,
+                      notificationsEnabled: _notificationsEnabled,
                     ),
                   );
                 },
