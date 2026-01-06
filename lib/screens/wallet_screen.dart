@@ -12,6 +12,27 @@ import 'dart:ui' as ui;
 // MODELO DE DATOS ACTUALIZADO (Algoritmo Generalizado)
 // ==========================================
 
+class TransactionCategory {
+  final String id;
+  final String name;
+  final int color;
+
+  TransactionCategory({
+    required this.id,
+    required this.name,
+    required this.color,
+  });
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'color': color};
+
+  factory TransactionCategory.fromJson(Map<String, dynamic> json) =>
+      TransactionCategory(
+        id: json['id'],
+        name: json['name'],
+        color: json['color'],
+      );
+}
+
 class Transaction {
   final String id;
   final String title;
@@ -25,6 +46,8 @@ class Transaction {
 
   final bool isExpense;
   final DateTime date;
+  final String categoryName;
+  final int categoryColor;
 
   Transaction({
     required this.id,
@@ -36,6 +59,8 @@ class Transaction {
     required this.amountInVES,
     required this.isExpense,
     required this.date,
+    this.categoryName = 'General',
+    this.categoryColor = 0xFF90A4AE,
   });
 
   Map<String, dynamic> toJson() => {
@@ -48,6 +73,8 @@ class Transaction {
     'amountInVES': amountInVES, // Guardamos Bs
     'isExpense': isExpense,
     'date': date.toIso8601String(),
+    'categoryName': categoryName,
+    'categoryColor': categoryColor,
   };
 
   factory Transaction.fromJson(Map<String, dynamic> json) => Transaction(
@@ -61,6 +88,8 @@ class Transaction {
     amountInVES: (json['amountInVES'] ?? 0).toDouble(),
     isExpense: json['isExpense'],
     date: DateTime.parse(json['date']),
+    categoryName: json['categoryName'] ?? 'General',
+    categoryColor: json['categoryColor'] ?? 0xFF90A4AE,
   );
 }
 
@@ -86,6 +115,14 @@ class _WalletScreenState extends State<WalletScreen> {
 
   // --- Estado ---
   List<Transaction> _transactions = [];
+  List<TransactionCategory> _categories = [];
+
+  // --- Filtros ---
+  String _searchQuery = '';
+  TransactionCategory? _selectedCategoryFilter;
+  String _sortOrder =
+      'DATE_DESC'; // DATE_DESC, DATE_ASC, AMOUNT_DESC, AMOUNT_ASC
+  DateTimeRange? _selectedDateRange;
 
   // Tasas de cambio configurables (Valores por defecto)
   final Map<String, double> _currentRates = {
@@ -101,6 +138,49 @@ class _WalletScreenState extends State<WalletScreen> {
   final GlobalKey _balanceCardKey = GlobalKey();
   final GlobalKey _listKey = GlobalKey();
   final GlobalKey _fabKey = GlobalKey();
+
+  bool get _hasActiveFilters =>
+      _selectedCategoryFilter != null ||
+      _selectedDateRange != null ||
+      _sortOrder != 'DATE_DESC' ||
+      _searchQuery.isNotEmpty;
+
+  List<Transaction> get _filteredTransactions {
+    return _transactions.where((t) {
+      // 1. Búsqueda
+      if (_searchQuery.isNotEmpty &&
+          !t.title.toLowerCase().contains(_searchQuery.toLowerCase())) {
+        return false;
+      }
+      // 2. Categoría
+      if (_selectedCategoryFilter != null &&
+          t.categoryName != _selectedCategoryFilter!.name) {
+        return false;
+      }
+      // 3. Rango de Fechas
+      if (_selectedDateRange != null) {
+        if (t.date.isBefore(_selectedDateRange!.start) ||
+            t.date.isAfter(
+              _selectedDateRange!.end.add(const Duration(days: 1)),
+            )) {
+          return false;
+        }
+      }
+      return true;
+    }).toList()..sort((a, b) {
+      switch (_sortOrder) {
+        case 'AMOUNT_ASC':
+          return a.amountInVES.compareTo(b.amountInVES);
+        case 'AMOUNT_DESC':
+          return b.amountInVES.compareTo(a.amountInVES);
+        case 'DATE_ASC':
+          return a.date.compareTo(b.date);
+        case 'DATE_DESC':
+        default:
+          return b.date.compareTo(a.date);
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -180,8 +260,27 @@ class _WalletScreenState extends State<WalletScreen> {
     final double? euro = prefs.getDouble('rate_euro');
     final double? custom = prefs.getDouble('rate_custom');
 
+    // 3. Cargar Categorías
+    final String? catData = prefs.getString('categories_data');
+    List<TransactionCategory> loadedCategories = [];
+    if (catData != null) {
+      final List<dynamic> decoded = jsonDecode(catData);
+      loadedCategories = decoded
+          .map((e) => TransactionCategory.fromJson(e))
+          .toList();
+    } else {
+      // Categorías por defecto
+      loadedCategories = [
+        TransactionCategory(id: '1', name: 'General', color: 0xFF90A4AE),
+        TransactionCategory(id: '2', name: 'Comida', color: 0xFFFF7043),
+        TransactionCategory(id: '3', name: 'Transporte', color: 0xFF42A5F5),
+      ];
+      _saveCategories(loadedCategories);
+    }
+
     setState(() {
       _transactions = loadedTransactions;
+      _categories = loadedCategories;
       if (bcv != null) _currentRates['BCV'] = bcv;
       if (usdt != null) _currentRates['USDT'] = usdt;
       if (euro != null) _currentRates['EURO'] = euro;
@@ -221,9 +320,15 @@ class _WalletScreenState extends State<WalletScreen> {
         if (item.currency == 'VES') {
           amountInVES = item.amount;
         } else {
-          // Usar tasa BCV por defecto para automatizaciones
-          rateUsed = _currentRates['BCV'] ?? 52.5;
-          rateType = 'BCV';
+          // Si es Efectivo, es independiente (1:1)
+          // Si es Digital (USD/EUR), usamos BCV por defecto
+          if (item.currency == 'USD_CASH') {
+            rateUsed = 1.0;
+            rateType = 'CASH';
+          } else {
+            rateUsed = _currentRates['BCV'] ?? 52.5;
+            rateType = 'BCV';
+          }
 
           if (item.isIndexed) {
             // Si es indexado, el registro es en VES calculado
@@ -306,6 +411,14 @@ class _WalletScreenState extends State<WalletScreen> {
     await prefs.setString('transactions_data', encoded);
   }
 
+  Future<void> _saveCategories(List<TransactionCategory> categories) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String encoded = jsonEncode(
+      categories.map((e) => e.toJson()).toList(),
+    );
+    await prefs.setString('categories_data', encoded);
+  }
+
   Future<void> _saveCustomRate(double customRate) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('rate_custom', customRate);
@@ -314,14 +427,32 @@ class _WalletScreenState extends State<WalletScreen> {
     });
   }
 
-  /// ALGORITMO: Cálculo del Saldo Neto en Bolívares (Moneda Común)
+  /// ALGORITMO: Cálculo del Saldo Neto en Bolívares (Excluyendo Efectivo USD)
   double get _totalBalanceVES {
     double total = 0;
     for (var t in _transactions) {
+      // El efectivo se maneja por separado como moneda paralela
+      if (t.originalCurrency == 'USD_CASH') continue;
+
       if (t.isExpense) {
         total -= t.amountInVES;
       } else {
         total += t.amountInVES;
+      }
+    }
+    return total;
+  }
+
+  /// ALGORITMO: Cálculo del Saldo en Efectivo USD (Paralelo)
+  double get _totalBalanceUSDCash {
+    double total = 0;
+    for (var t in _transactions) {
+      if (t.originalCurrency == 'USD_CASH') {
+        if (t.isExpense) {
+          total -= t.originalAmount;
+        } else {
+          total += t.originalAmount;
+        }
       }
     }
     return total;
@@ -455,6 +586,247 @@ class _WalletScreenState extends State<WalletScreen> {
     );
   }
 
+  // --- Modal de Filtros ---
+  void _showFilterModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateModal) {
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.75,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: _backgroundColor,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(30),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Filtros',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (_hasActiveFilters)
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _selectedCategoryFilter = null;
+                            _sortOrder = 'DATE_DESC';
+                            _selectedDateRange = null;
+                            _searchQuery = '';
+                          });
+                          Navigator.pop(context);
+                        },
+                        child: Text(
+                          'Limpiar Todo',
+                          style: GoogleFonts.poppins(color: _expenseRed),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Sort
+                Text(
+                  'Ordenar por',
+                  style: GoogleFonts.poppins(color: _textGrey),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _buildFilterChip(
+                      'Más Recientes',
+                      'DATE_DESC',
+                      setStateModal,
+                    ),
+                    _buildFilterChip('Más Antiguos', 'DATE_ASC', setStateModal),
+                    _buildFilterChip(
+                      'Mayor Monto',
+                      'AMOUNT_DESC',
+                      setStateModal,
+                    ),
+                    _buildFilterChip(
+                      'Menor Monto',
+                      'AMOUNT_ASC',
+                      setStateModal,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Date Range
+                Text('Periodo', style: GoogleFonts.poppins(color: _textGrey)),
+                const SizedBox(height: 10),
+                InkWell(
+                  onTap: () async {
+                    final picked = await showDateRangePicker(
+                      context: context,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                      initialDateRange: _selectedDateRange,
+                      builder: (context, child) => Theme(
+                        data: Theme.of(context).copyWith(
+                          colorScheme: ColorScheme.dark(
+                            primary: _primaryGreen,
+                            onPrimary: _backgroundColor,
+                            surface: _cardColor,
+                            onSurface: Colors.white,
+                          ),
+                        ),
+                        child: child!,
+                      ),
+                    );
+                    if (picked != null) {
+                      setState(() => _selectedDateRange = picked);
+                      setStateModal(() {});
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _cardColor,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _selectedDateRange != null
+                            ? _primaryGreen
+                            : Colors.white10,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _selectedDateRange == null
+                              ? 'Seleccionar fechas'
+                              : '${DateFormat('dd/MM/yy').format(_selectedDateRange!.start)} - ${DateFormat('dd/MM/yy').format(_selectedDateRange!.end)}',
+                          style: GoogleFonts.poppins(color: Colors.white),
+                        ),
+                        Icon(
+                          Icons.calendar_today,
+                          color: _selectedDateRange != null
+                              ? _primaryGreen
+                              : _textGrey,
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Categories
+                Text('Categoría', style: GoogleFonts.poppins(color: _textGrey)),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: _categories.map((cat) {
+                        final isSelected =
+                            _selectedCategoryFilter?.id == cat.id;
+                        return FilterChip(
+                          label: Text(cat.name),
+                          selected: isSelected,
+                          onSelected: (bool selected) {
+                            setState(() {
+                              _selectedCategoryFilter = selected ? cat : null;
+                            });
+                            setStateModal(() {});
+                          },
+                          backgroundColor: _cardColor,
+                          selectedColor: Color(cat.color).withOpacity(0.3),
+                          checkmarkColor: Color(cat.color),
+                          labelStyle: GoogleFonts.poppins(
+                            color: isSelected
+                                ? Color(cat.color)
+                                : Colors.white70,
+                            fontWeight: isSelected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(
+                              color: isSelected
+                                  ? Color(cat.color)
+                                  : Colors.transparent,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+
+                // Apply Button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _primaryGreen,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: Text(
+                      'Aplicar Filtros',
+                      style: GoogleFonts.poppins(
+                        color: _backgroundColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(
+    String label,
+    String value,
+    StateSetter setStateModal,
+  ) {
+    final isSelected = _sortOrder == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (bool selected) {
+        if (selected) {
+          setState(() => _sortOrder = value);
+          setStateModal(() {});
+        }
+      },
+      selectedColor: _primaryGreen,
+      backgroundColor: _cardColor,
+      labelStyle: GoogleFonts.poppins(
+        color: isSelected ? _backgroundColor : Colors.white,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    );
+  }
+
   void _openTransactionForm() {
     showModalBottomSheet(
       context: context,
@@ -467,6 +839,13 @@ class _WalletScreenState extends State<WalletScreen> {
         expenseRed: _expenseRed,
         textGrey: _textGrey,
         rates: _currentRates,
+        categories: _categories,
+        onAddCategory: (newCat) {
+          setState(() {
+            _categories.add(newCat);
+          });
+          _saveCategories(_categories);
+        },
         onSave: (transaction) {
           setState(() {
             _transactions.insert(0, transaction);
@@ -526,48 +905,73 @@ class _WalletScreenState extends State<WalletScreen> {
               children: [
                 Container(key: _balanceCardKey, child: _buildBalanceCard()),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 10),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Historial (Base Bs)',
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 10),
+                  child: TextField(
+                    onChanged: (val) => setState(() => _searchQuery = val),
+                    style: GoogleFonts.poppins(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Buscar movimiento...',
+                      hintStyle: GoogleFonts.poppins(color: _textGrey),
+                      prefixIcon: Icon(Icons.search, color: _textGrey),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          Icons.filter_list,
+                          color: _hasActiveFilters ? _primaryGreen : _textGrey,
                         ),
+                        onPressed: _showFilterModal,
                       ),
-                      Icon(Icons.filter_list, color: _textGrey),
-                    ],
+                      filled: true,
+                      fillColor: _cardColor,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 0,
+                        horizontal: 16,
+                      ),
+                    ),
                   ),
                 ),
                 Expanded(
-                  child: _transactions.isEmpty
+                  child: _filteredTransactions.isEmpty
                       ? _buildEmptyState()
                       : ListView.builder(
                           padding: const EdgeInsets.symmetric(horizontal: 24),
-                          itemCount: _transactions.length,
+                          itemCount: _filteredTransactions.length,
                           itemBuilder: (context, index) {
-                            final transaction = _transactions[index];
+                            final transaction = _filteredTransactions[index];
                             return _buildTransactionItem(transaction);
                           },
                         ),
                 ),
               ],
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        key: _fabKey,
-        onPressed: _openTransactionForm,
-        backgroundColor: _primaryGreen,
-        icon: const Icon(Icons.add, color: Color(0xFF132B3D)),
-        label: Text(
-          'Registrar',
-          style: GoogleFonts.poppins(
-            color: const Color(0xFF132B3D),
-            fontWeight: FontWeight.bold,
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton(
+            heroTag: 'exchangeBtn',
+            onPressed: _openExchangeModal,
+            backgroundColor: _cardColor,
+            child: const Icon(Icons.currency_exchange, color: Colors.white),
           ),
-        ),
+          const SizedBox(width: 16),
+          FloatingActionButton.extended(
+            heroTag: 'registerBtn',
+            key: _fabKey,
+            onPressed: _openTransactionForm,
+            backgroundColor: _primaryGreen,
+            icon: const Icon(Icons.add, color: Color(0xFF132B3D)),
+            label: Text(
+              'Registrar',
+              style: GoogleFonts.poppins(
+                color: const Color(0xFF132B3D),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -606,13 +1010,23 @@ class _WalletScreenState extends State<WalletScreen> {
           const SizedBox(height: 8),
           // Mostramos GRANDE el valor en Dólares (lo que le importa al usuario)
           Text(
-            '\$${projectedUSD.toStringAsFixed(2)}',
+            'Digital: \$${projectedUSD.toStringAsFixed(2)}',
             style: GoogleFonts.poppins(
               color: Colors.white,
-              fontSize: 40,
+              fontSize: 32,
               fontWeight: FontWeight.bold,
             ),
           ),
+          if (_totalBalanceUSDCash > 0)
+            Text(
+              'Efectivo: \$${_totalBalanceUSDCash.toStringAsFixed(2)}',
+              style: GoogleFonts.poppins(
+                color: const Color(0xFFFFD700),
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+
           const SizedBox(height: 8),
 
           // Mostramos PEQUEÑO el Saldo Real en Bolívares (La base del algoritmo)
@@ -624,7 +1038,7 @@ class _WalletScreenState extends State<WalletScreen> {
               border: Border.all(color: _primaryGreen.withOpacity(0.3)),
             ),
             child: Text(
-              'Base Contable: ${currencyFormatter.format(_totalBalanceVES)}',
+              'Base Digital: ${currencyFormatter.format(_totalBalanceVES)}',
               style: GoogleFonts.poppins(
                 color: _primaryGreen,
                 fontSize: 12,
@@ -672,11 +1086,11 @@ class _WalletScreenState extends State<WalletScreen> {
     final originalFormat = NumberFormat.currency(
       symbol: t.originalCurrency == 'VES'
           ? 'Bs '
-          : (t.originalCurrency == 'EUR' ? '€ ' : '\$ '),
+          : (t.originalCurrency == 'EUR'
+                ? '€ '
+                : (t.originalCurrency == 'USD_CASH' ? '💵 ' : '\$ ')),
       decimalDigits: 2,
     );
-
-    final vesFormat = NumberFormat.currency(symbol: 'Bs ', decimalDigits: 2);
 
     return Dismissible(
       key: Key(t.id),
@@ -750,26 +1164,34 @@ class _WalletScreenState extends State<WalletScreen> {
                       ],
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Color(t.categoryColor).withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      t.categoryName,
+                      style: GoogleFonts.poppins(
+                        color: Color(t.categoryColor),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
             // Muestra el impacto real en Bolívares
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${t.isExpense ? "-" : "+"}${vesFormat.format(t.amountInVES)}',
-                  style: GoogleFonts.poppins(
-                    color: t.isExpense ? _expenseRed : _primaryGreen,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-                Text(
-                  'Base Bs',
-                  style: GoogleFonts.poppins(color: _textGrey, fontSize: 10),
-                ),
-              ],
+            _TransactionAmountToggle(
+              transaction: t,
+              bcvRate: _currentRates['BCV'] ?? 1.0,
+              color: t.isExpense ? _expenseRed : _primaryGreen,
+              labelColor: _textGrey,
             ),
           ],
         ),
@@ -778,20 +1200,22 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 
   Widget _buildEmptyState() {
+    final msg = _transactions.isEmpty
+        ? 'Sin registros aún'
+        : 'No se encontraron resultados';
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.account_balance_wallet_outlined,
+            _transactions.isEmpty
+                ? Icons.account_balance_wallet_outlined
+                : Icons.search_off,
             size: 80,
             color: _textGrey.withOpacity(0.2),
           ),
           const SizedBox(height: 16),
-          Text(
-            'Sin registros aún',
-            style: GoogleFonts.poppins(color: _textGrey),
-          ),
+          Text(msg, style: GoogleFonts.poppins(color: _textGrey)),
         ],
       ),
     );
@@ -818,6 +1242,71 @@ class _WalletScreenState extends State<WalletScreen> {
       ],
     );
   }
+
+  void _openExchangeModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ExchangeModal(
+        backgroundColor: _backgroundColor,
+        cardColor: _cardColor,
+        primaryGreen: _primaryGreen,
+        expenseRed: _expenseRed,
+        textGrey: _textGrey,
+        initialRate: _currentRates['BCV'] ?? 50.0,
+        onConfirm: (isBuying, usdAmount, vesAmount, rate) {
+          final date = DateTime.now();
+          final timestamp = date.millisecondsSinceEpoch;
+
+          // 1. Transacción de Efectivo (USD)
+          final cashTx = Transaction(
+            id: '${timestamp}_cash',
+            title: isBuying
+                ? 'Compra Divisas (Entrada)'
+                : 'Venta Divisas (Salida)',
+            originalAmount: usdAmount,
+            originalCurrency: 'USD_CASH',
+            rateType: 'CASH',
+            exchangeRate: 1.0,
+            amountInVES:
+                usdAmount, // En cash, amountInVES guarda el valor en USD
+            isExpense:
+                !isBuying, // Si compro, entra dinero a la caja (Ingreso). Si vendo, sale (Gasto).
+            date: date,
+          );
+
+          // 2. Transacción Digital (VES)
+          final vesTx = Transaction(
+            id: '${timestamp}_ves',
+            title: isBuying
+                ? 'Compra Divisas (Salida)'
+                : 'Venta Divisas (Entrada)',
+            originalAmount: vesAmount,
+            originalCurrency: 'VES',
+            rateType: 'MANUAL',
+            exchangeRate: 1.0,
+            amountInVES: vesAmount,
+            isExpense: isBuying, // Si compro, gasto Bs. Si vendo, entran Bs.
+            date: date,
+          );
+
+          setState(() {
+            _transactions.insert(0, cashTx);
+            _transactions.insert(0, vesTx);
+          });
+          _saveTransactions();
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Conversión registrada con éxito'),
+              backgroundColor: _primaryGreen,
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 // ==========================================
@@ -831,6 +1320,8 @@ class _TransactionForm extends StatefulWidget {
   final Color expenseRed;
   final Color textGrey;
   final Map<String, double> rates;
+  final List<TransactionCategory> categories;
+  final Function(TransactionCategory) onAddCategory;
   final Function(Transaction) onSave;
 
   const _TransactionForm({
@@ -840,6 +1331,8 @@ class _TransactionForm extends StatefulWidget {
     required this.expenseRed,
     required this.textGrey,
     required this.rates,
+    required this.categories,
+    required this.onAddCategory,
     required this.onSave,
   });
 
@@ -852,12 +1345,26 @@ class _TransactionFormState extends State<_TransactionForm> {
   final _amountController = TextEditingController();
   final _customRateController = TextEditingController();
 
+  TransactionCategory? _selectedCategory;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.categories.isNotEmpty) {
+      _selectedCategory = widget.categories.first;
+    }
+  }
+
   bool _isExpense = true;
   String _selectedCurrency = 'VES'; // Moneda de entrada
   String _selectedRateType = 'BCV'; // Tasa a usar para la conversión
 
   // Obtiene la tasa seleccionada para el cálculo
   double get _currentRate {
+    // Si es Efectivo, no usamos ninguna tasa (1:1), es independiente.
+    if (_selectedCurrency == 'USD_CASH') {
+      return 1.0;
+    }
     if (_selectedRateType == 'MANUAL') {
       return double.tryParse(_customRateController.text) ?? 1.0;
     }
@@ -893,11 +1400,15 @@ class _TransactionFormState extends State<_TransactionForm> {
       title: _titleController.text,
       originalAmount: originalAmount,
       originalCurrency: _selectedCurrency,
-      rateType: _selectedCurrency == 'VES' ? 'N/A' : _selectedRateType,
+      rateType: _selectedCurrency == 'VES'
+          ? 'N/A'
+          : (_selectedCurrency == 'USD_CASH' ? 'CASH' : _selectedRateType),
       exchangeRate: _currentRate,
       amountInVES: _calculatedVES, // GUARDAMOS EN MONEDA COMÚN
       isExpense: _isExpense,
       date: DateTime.now(),
+      categoryName: _selectedCategory?.name ?? 'General',
+      categoryColor: _selectedCategory?.color ?? 0xFF90A4AE,
     );
 
     widget.onSave(transaction);
@@ -998,11 +1509,15 @@ class _TransactionFormState extends State<_TransactionForm> {
                         Icons.keyboard_arrow_down,
                         color: Colors.white,
                       ),
-                      items: ['VES', 'USD', 'EUR'].map((String val) {
+                      items: ['VES', 'USD', 'EUR', 'USD_CASH'].map((
+                        String val,
+                      ) {
+                        String label = val;
+                        if (val == 'USD_CASH') label = 'Efectivo (\$)';
                         return DropdownMenuItem(
                           value: val,
                           child: Text(
-                            val,
+                            label,
                             style: GoogleFonts.poppins(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -1024,8 +1539,9 @@ class _TransactionFormState extends State<_TransactionForm> {
 
           const SizedBox(height: 16),
 
-          // 3. Selección de Tasa (Solo si NO es VES)
-          if (_selectedCurrency != 'VES') ...[
+          // 3. Selección de Tasa (Solo si NO es VES y NO es Efectivo)
+          if (_selectedCurrency != 'VES' &&
+              _selectedCurrency != 'USD_CASH') ...[
             Text(
               'Tasa de Conversión (a Bolívares)',
               style: GoogleFonts.poppins(color: widget.textGrey),
@@ -1084,14 +1600,18 @@ class _TransactionFormState extends State<_TransactionForm> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Registro Contable (Base):',
+                  _selectedCurrency == 'USD_CASH'
+                      ? 'Saldo en Efectivo:'
+                      : 'Registro Contable (Base):',
                   style: GoogleFonts.poppins(
                     color: widget.textGrey,
                     fontSize: 12,
                   ),
                 ),
                 Text(
-                  'Bs. ${_calculatedVES.toStringAsFixed(2)}',
+                  _selectedCurrency == 'USD_CASH'
+                      ? '\$${_calculatedVES.toStringAsFixed(2)}'
+                      : 'Bs. ${_calculatedVES.toStringAsFixed(2)}',
                   style: GoogleFonts.poppins(
                     color: activeColor,
                     fontWeight: FontWeight.bold,
@@ -1101,6 +1621,10 @@ class _TransactionFormState extends State<_TransactionForm> {
               ],
             ),
           ),
+
+          const SizedBox(height: 16),
+
+          _buildCategorySelector(),
 
           const SizedBox(height: 16),
 
@@ -1215,6 +1739,500 @@ class _TransactionFormState extends State<_TransactionForm> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCategorySelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Categoría', style: GoogleFonts.poppins(color: widget.textGrey)),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              // Botón Agregar
+              GestureDetector(
+                onTap: _showAddCategoryDialog,
+                child: Container(
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: widget.cardColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: widget.primaryGreen),
+                  ),
+                  child: Icon(Icons.add, color: widget.primaryGreen, size: 20),
+                ),
+              ),
+              // Lista de Categorías
+              ...widget.categories.map((cat) {
+                final isSelected = _selectedCategory?.id == cat.id;
+                return GestureDetector(
+                  onTap: () => setState(() => _selectedCategory = cat),
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected ? Color(cat.color) : widget.cardColor,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isSelected ? Colors.transparent : Colors.white10,
+                      ),
+                    ),
+                    child: Text(
+                      cat.name,
+                      style: GoogleFonts.poppins(
+                        color: isSelected ? Colors.white : Colors.white70,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showAddCategoryDialog() {
+    final nameController = TextEditingController();
+    Color selectedColor = const Color(0xFF90A4AE);
+    final List<Color> colors = [
+      const Color(0xFFFF7043), // Orange
+      const Color(0xFF42A5F5), // Blue
+      const Color(0xFF26C6DA), // Cyan
+      const Color(0xFF66BB6A), // Green
+      const Color(0xFFEF5350), // Red
+      const Color(0xFFAB47BC), // Purple
+      const Color(0xFFFFCA28), // Amber
+      const Color(0xFF8D6E63), // Brown
+      const Color(0xFF78909C), // Blue Grey
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            backgroundColor: widget.cardColor,
+            title: Text(
+              'Nueva Categoría',
+              style: GoogleFonts.poppins(color: Colors.white),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  style: GoogleFonts.poppins(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Nombre',
+                    labelStyle: TextStyle(color: widget.textGrey),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: widget.textGrey),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: widget.primaryGreen),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: colors.map((color) {
+                    return GestureDetector(
+                      onTap: () => setStateDialog(() => selectedColor = color),
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: selectedColor == color
+                              ? Border.all(color: Colors.white, width: 2)
+                              : null,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Cancelar',
+                  style: GoogleFonts.poppins(color: widget.textGrey),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (nameController.text.isNotEmpty) {
+                    final newCat = TransactionCategory(
+                      id: DateTime.now().millisecondsSinceEpoch.toString(),
+                      name: nameController.text,
+                      color: selectedColor.value,
+                    );
+                    widget.onAddCategory(newCat);
+                    setState(() => _selectedCategory = newCat);
+                    Navigator.pop(context);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: widget.primaryGreen,
+                ),
+                child: Text(
+                  'Crear',
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF132B3D),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ==========================================
+// MODAL DE INTERCAMBIO (COMPRA/VENTA)
+// ==========================================
+
+class _ExchangeModal extends StatefulWidget {
+  final Color backgroundColor;
+  final Color cardColor;
+  final Color primaryGreen;
+  final Color expenseRed;
+  final Color textGrey;
+  final double initialRate;
+  final Function(bool isBuying, double usd, double ves, double rate) onConfirm;
+
+  const _ExchangeModal({
+    required this.backgroundColor,
+    required this.cardColor,
+    required this.primaryGreen,
+    required this.expenseRed,
+    required this.textGrey,
+    required this.initialRate,
+    required this.onConfirm,
+  });
+
+  @override
+  State<_ExchangeModal> createState() => _ExchangeModalState();
+}
+
+class _ExchangeModalState extends State<_ExchangeModal> {
+  bool _isBuying =
+      false; // false = Vender $ (Recibir Bs), true = Comprar $ (Pagar Bs)
+  final _usdController = TextEditingController();
+  final _rateController = TextEditingController();
+  final _vesController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _rateController.text = widget.initialRate.toString();
+  }
+
+  void _calculateVES() {
+    final usd = double.tryParse(_usdController.text) ?? 0.0;
+    final rate = double.tryParse(_rateController.text) ?? 0.0;
+    final total = usd * rate;
+    if (total > 0) {
+      _vesController.text = total.toStringAsFixed(2);
+    }
+  }
+
+  void _calculateRateFromVES() {
+    final usd = double.tryParse(_usdController.text) ?? 0.0;
+    final ves = double.tryParse(_vesController.text) ?? 0.0;
+    if (usd > 0 && ves > 0) {
+      final rate = ves / usd;
+      _rateController.text = rate.toStringAsFixed(2);
+    }
+  }
+
+  void _submit() {
+    final usd = double.tryParse(_usdController.text) ?? 0.0;
+    final ves = double.tryParse(_vesController.text) ?? 0.0;
+    final rate = double.tryParse(_rateController.text) ?? 0.0;
+
+    if (usd > 0 && ves > 0) {
+      widget.onConfirm(_isBuying, usd, ves, rate);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = _isBuying ? widget.expenseRed : widget.primaryGreen;
+    final actionLabel = _isBuying ? 'Comprar Efectivo' : 'Vender Efectivo';
+
+    return Container(
+      padding: EdgeInsets.only(
+        top: 24,
+        left: 24,
+        right: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      decoration: BoxDecoration(
+        color: widget.backgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Center(
+            child: Container(
+              height: 4,
+              width: 40,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Toggle Switch
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: widget.cardColor,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _isBuying = false),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: !_isBuying
+                            ? widget.primaryGreen
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Vender \$',
+                        style: GoogleFonts.poppins(
+                          color: !_isBuying
+                              ? const Color(0xFF132B3D)
+                              : Colors.white54,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _isBuying = true),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _isBuying
+                            ? widget.expenseRed
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Comprar \$',
+                        style: GoogleFonts.poppins(
+                          color: _isBuying ? Colors.white : Colors.white54,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Inputs
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: _buildInput(
+                  controller: _usdController,
+                  label: 'Cantidad \$',
+                  onChanged: (_) => _calculateVES(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 1,
+                child: _buildInput(
+                  controller: _rateController,
+                  label: 'Tasa',
+                  onChanged: (_) => _calculateVES(),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Icon(Icons.arrow_downward, color: Colors.white24),
+          const SizedBox(height: 16),
+          _buildInput(
+            controller: _vesController,
+            label: _isBuying ? 'Total a Pagar (Bs)' : 'Total a Recibir (Bs)',
+            onChanged: (_) => _calculateRateFromVES(),
+            isBold: true,
+          ),
+
+          const SizedBox(height: 24),
+
+          SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton(
+              onPressed: _submit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: activeColor,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              child: Text(
+                actionLabel.toUpperCase(),
+                style: GoogleFonts.poppins(
+                  color: _isBuying ? Colors.white : const Color(0xFF132B3D),
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInput({
+    required TextEditingController controller,
+    required String label,
+    required Function(String) onChanged,
+    bool isBold = false,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      style: GoogleFonts.poppins(
+        color: Colors.white,
+        fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+        fontSize: isBold ? 18 : 14,
+      ),
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: GoogleFonts.poppins(color: widget.textGrey),
+        filled: true,
+        fillColor: widget.cardColor,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+    );
+  }
+}
+
+class _TransactionAmountToggle extends StatefulWidget {
+  final Transaction transaction;
+  final double bcvRate;
+  final Color color;
+  final Color labelColor;
+
+  const _TransactionAmountToggle({
+    required this.transaction,
+    required this.bcvRate,
+    required this.color,
+    required this.labelColor,
+  });
+
+  @override
+  State<_TransactionAmountToggle> createState() =>
+      _TransactionAmountToggleState();
+}
+
+class _TransactionAmountToggleState extends State<_TransactionAmountToggle> {
+  int _displayMode = 0; // 0: Original, 1: USD (BCV), 2: VES
+
+  void _toggle() {
+    if (widget.transaction.originalCurrency == 'USD_CASH') return;
+    setState(() {
+      _displayMode = (_displayMode + 1) % 3;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.transaction;
+    double val = t.originalAmount;
+    String symbol = t.originalCurrency == 'VES'
+        ? 'Bs '
+        : (t.originalCurrency == 'EUR' ? '€ ' : '\$ ');
+    String label = t.originalCurrency;
+
+    if (t.originalCurrency == 'USD_CASH') {
+      val = t.originalAmount;
+      symbol = '\$ ';
+      label = 'Efectivo';
+    } else if (_displayMode == 1) {
+      val = t.amountInVES / (widget.bcvRate > 0 ? widget.bcvRate : 1);
+      symbol = '\$ ';
+      label = 'BCV';
+    } else if (_displayMode == 2) {
+      val = t.amountInVES;
+      symbol = 'Bs ';
+      label = 'Bolívares';
+    }
+
+    return GestureDetector(
+      onTap: _toggle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            '${t.isExpense ? "-" : "+"}$symbol${NumberFormat.currency(symbol: '', decimalDigits: 2).format(val)}',
+            style: GoogleFonts.poppins(
+              color: widget.color,
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+            ),
+          ),
+          Text(
+            label,
+            style: GoogleFonts.poppins(color: widget.labelColor, fontSize: 10),
+          ),
+        ],
       ),
     );
   }

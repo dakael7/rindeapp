@@ -73,8 +73,8 @@ class ExchangeRateService {
       final String target = '$base?page=$page';
 
       if (kIsWeb) {
-        // Usamos AllOrigins para evitar CORS en Web y obtener JSON limpio
-        return 'https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}';
+        // Usamos corsproxy.io que suele ser más estable y rápido para JSON
+        return 'https://corsproxy.io/?$target';
       }
       return target;
     }
@@ -86,10 +86,8 @@ class ExchangeRateService {
       String body = response.body;
 
       // Si estamos en web con AllOrigins, desempaquetamos la respuesta
-      if (kIsWeb) {
-        final wrapper = jsonDecode(body);
-        body = wrapper['contents'];
-      }
+      // Nota: corsproxy.io devuelve el cuerpo directamente, no necesitamos desempaquetar 'contents'
+      // como hacíamos con allorigins.
 
       final data = jsonDecode(body);
       final monitors = data['monitors'];
@@ -105,10 +103,7 @@ class ExchangeRateService {
 
         if (responseCrypto.statusCode == 200) {
           String bodyCrypto = responseCrypto.body;
-          if (kIsWeb) {
-            final wrapper = jsonDecode(bodyCrypto);
-            bodyCrypto = wrapper['contents'];
-          }
+          // corsproxy devuelve directo
           final dataCrypto = jsonDecode(bodyCrypto);
           usdt = (dataCrypto['monitors']['binance']['price'] ?? usdt)
               .toDouble();
@@ -125,7 +120,7 @@ class ExchangeRateService {
     String getUrl() {
       const String target = 'https://ve.dolarapi.com/v1/dolares';
       if (kIsWeb) {
-        return 'https://api.allorigins.win/get?url=${Uri.encodeComponent(target)}';
+        return 'https://corsproxy.io/?$target';
       }
       return target;
     }
@@ -134,10 +129,6 @@ class ExchangeRateService {
 
     if (response.statusCode == 200) {
       String body = response.body;
-      if (kIsWeb) {
-        final wrapper = jsonDecode(body);
-        body = wrapper['contents'];
-      }
 
       final List<dynamic> data = jsonDecode(body);
       double bcv = 0;

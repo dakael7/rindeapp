@@ -14,6 +14,7 @@ import 'package:tutorial_coach_mark/tutorial_coach_mark.dart'; // Importar paque
 import 'wallet_screen.dart'; // Asegúrate de que este archivo exista en la misma carpeta
 import 'rate_history_screen.dart';
 import 'analytics_screen.dart';
+import 'inflation_detail_screen.dart'; // Importar nueva pantalla
 import '../services/exchange_rate_service.dart';
 import 'savings_screen.dart';
 import 'profile_screen.dart';
@@ -45,6 +46,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _obscureBalances = false;
   int _pendingCount = 0;
   double _pendingAmountVES = 0.0;
+  double _totalSavedUSD = 0.0;
+  double _totalGoalUSD = 0.0;
+  double _totalBalanceUSDCash = 0.0;
+
+  // --- Datos para Inflación Personal ---
+  Map<String, double> _currencyBalances = {
+    'VES': 0.0,
+    'USD': 0.0,
+    'EUR': 0.0,
+    'USDT': 0.0,
+    'USD_CASH': 0.0,
+  };
+  List<Map<String, dynamic>> _rateHistory = [];
 
   // --- Animaciones ---
   late AnimationController _entranceController;
@@ -60,8 +74,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final GlobalKey _debtsKey = GlobalKey();
   final GlobalKey _fabKey = GlobalKey();
   final GlobalKey _walletTabKey = GlobalKey();
-  final GlobalKey _analyticsTabKey = GlobalKey();
-  final GlobalKey _profileTabKey = GlobalKey();
 
   @override
   void initState() {
@@ -130,12 +142,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       paddingFocus: 10,
       opacityShadow: 0.8,
       imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-      onSkip: () {
-        _markTutorialAsSeen();
-        return true;
-      },
       onFinish: () {
-        // Al terminar Home, vamos a la Billetera para seguir el tour
+        // Al terminar Home, navegamos a la Billetera para continuar el tour
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -155,6 +163,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           }
         });
       },
+      onSkip: () {
+        _markTutorialAsSeen();
+        return true;
+      },
+      onClickTarget: (target) {},
+      onClickOverlay: (target) {},
     ).show(context: context);
   }
 
@@ -184,21 +198,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ContentAlign.top,
       ),
       _buildTarget(
-        _analyticsTabKey,
-        "Analíticas",
-        "Visualiza gráficos y estadísticas detalladas de tus finanzas.",
-        ContentAlign.top,
-      ),
-      _buildTarget(
         _walletTabKey,
         "Billetera",
         "Registra tus ingresos y gastos aquí. El sistema calculará todo automáticamente en base a la tasa del día.",
-        ContentAlign.top,
-      ),
-      _buildTarget(
-        _profileTabKey,
-        "Perfil",
-        "Configura tu seguridad, copias de seguridad y datos personales.",
         ContentAlign.top,
       ),
       _buildTarget(
@@ -298,7 +300,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final String? data = prefs.getString('transactions_data');
 
     double totalVES = 0.0;
+    double totalUSDCash = 0.0;
     List<Map<String, dynamic>> loadedRecent = [];
+    Map<String, double> tempBalances = {
+      'VES': 0.0,
+      'USD': 0.0,
+      'EUR': 0.0,
+      'USDT': 0.0,
+      'USD_CASH': 0.0,
+    };
 
     if (data != null) {
       final List<dynamic> decoded = jsonDecode(data);
@@ -322,11 +332,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
         final bool isExpense = item['isExpense'] ?? true;
 
-        if (isExpense) {
-          totalVES -= amountVES;
+        // --- Calcular Saldos por Moneda Original ---
+        String origCurrency = item['originalCurrency'] ?? 'VES';
+        double origAmount = (item['originalAmount'] ?? 0).toDouble();
+
+        if (origCurrency == 'USD_CASH') {
+          // El efectivo se suma aparte (Paralelo)
+          totalUSDCash += isExpense ? -origAmount : origAmount;
         } else {
-          totalVES += amountVES;
+          // El resto (VES, USD Digital, EUR) se suma a la base contable en VES
+          totalVES += isExpense ? -amountVES : amountVES;
         }
+
+        // Sumar o restar según sea ingreso o gasto
+        tempBalances[origCurrency] =
+            (tempBalances[origCurrency] ?? 0) +
+            (isExpense ? -origAmount : origAmount);
       }
 
       // Convertimos a lista de mapas segura
@@ -347,14 +368,49 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       loadedRecent = allTransactions.take(5).toList();
     }
 
+    // Cargar Metas de Ahorro
+    final String? savingsData = prefs.getString('savings_data');
+    double tempSaved = 0.0;
+    double tempGoal = 0.0;
+    if (savingsData != null) {
+      try {
+        final List<dynamic> decoded = jsonDecode(savingsData);
+        for (var item in decoded) {
+          tempSaved += (item['currentAmount'] ?? 0).toDouble();
+          tempGoal += (item['targetAmount'] ?? 0).toDouble();
+        }
+      } catch (_) {}
+    }
+
     if (mounted) {
       setState(() {
         _totalBalanceVES = totalVES;
+        _totalBalanceUSDCash = totalUSDCash;
         _recentTransactions = loadedRecent;
+        _currencyBalances = tempBalances;
+        _totalSavedUSD = tempSaved;
+        _totalGoalUSD = tempGoal;
       });
       // Intentar actualizar tasas online en segundo plano
       _updateRatesOnline();
       _calculatePendingPayments();
+      _loadRateHistory(); // Cargar historial para cálculos de inflación
+    }
+  }
+
+  Future<void> _loadRateHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? data = prefs.getString('rates_history_data');
+    if (data != null) {
+      final List<dynamic> decoded = jsonDecode(data);
+      setState(() {
+        _rateHistory = decoded
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _rateHistory.sort(
+          (a, b) => b['date'].compareTo(a['date']),
+        ); // Más reciente primero
+      });
     }
   }
 
@@ -538,6 +594,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     double amount = 0.0;
     String symbol = '\$';
     String label = 'Indexado: BCV';
+    double cash = _totalBalanceUSDCash;
 
     final rate = _rates[_currentDisplayMode] ?? 1.0;
 
@@ -559,7 +616,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         symbol = '\$';
       label = 'Indexado: $_currentDisplayMode';
     }
-    return {'amount': amount, 'symbol': symbol, 'label': label};
+    return {'amount': amount, 'symbol': symbol, 'label': label, 'cash': cash};
   }
 
   void _showFeedbackMessage(String message) {
@@ -674,6 +731,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       onToggleMode: _toggleDisplayMode,
                       allHabitsDone: true,
                       obscureBalances: _obscureBalances,
+                      currencyBalances: _currencyBalances,
+                      rateHistory: _rateHistory,
+                      currentRates: _rates,
+                      cashBalance: _totalBalanceUSDCash,
+                      totalSaved: _totalSavedUSD,
+                      totalGoal: _totalGoalUSD,
+                      onSavingsTap: _openSavings,
                     ),
                   ),
 
@@ -707,8 +771,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         primaryGreen: primaryGreen,
                         expenseRed: expenseRed,
                         textGrey: textGrey,
-                        transactions:
-                            _recentTransactions, // Pasamos la lista corregida
+                        transactions: _recentTransactions,
+                        currentRates: _rates,
                       ),
                     ),
                   ),
@@ -736,19 +800,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 _buildNavItem(1, Icons.bar_chart, primaryGreen, textGrey),
                 ScaleTransition(
                   scale: _fadeAnimation,
-                  child: FloatingActionButton(
-                    key: _fabKey,
-                    onPressed: _showCalculatorSheet,
-                    backgroundColor: cardColor,
-                    elevation: 0,
-                    shape: const CircleBorder(
-                      side: BorderSide(color: primaryGreen, width: 1.5),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: primaryGreen.withOpacity(0.4),
+                          blurRadius: 12,
+                          spreadRadius: 1,
+                        ),
+                      ],
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Image.asset(
-                        'assets/images/logo.png',
-                        fit: BoxFit.contain,
+                    child: FloatingActionButton(
+                      key: _fabKey,
+                      onPressed: _showCalculatorSheet,
+                      backgroundColor: cardColor,
+                      elevation: 0,
+                      shape: const CircleBorder(
+                        side: BorderSide(color: primaryGreen, width: 1.5),
+                      ),
+                      child: ShaderMask(
+                        shaderCallback: (bounds) => const LinearGradient(
+                          colors: [primaryGreen, Color(0xFFFFD700)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ).createShader(bounds),
+                        child: const Icon(
+                          Icons.calculate,
+                          color: Colors.white,
+                          size: 30,
+                        ),
                       ),
                     ),
                   ),
@@ -760,13 +841,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   textGrey,
                   key: _walletTabKey,
                 ),
-                _buildNavItem(
-                  3,
-                  Icons.person_outline,
-                  primaryGreen,
-                  textGrey,
-                  key: _profileTabKey,
-                ),
+                _buildNavItem(3, Icons.person_outline, primaryGreen, textGrey),
               ],
             ),
           ),
@@ -838,7 +913,8 @@ class _RecentActivityList extends StatelessWidget {
   final Color primaryGreen;
   final Color expenseRed;
   final Color textGrey;
-  final List<Map<String, dynamic>> transactions; // Corregido: recibe la lista
+  final List<Map<String, dynamic>> transactions;
+  final Map<String, double> currentRates;
 
   const _RecentActivityList({
     required this.cardColor,
@@ -846,6 +922,7 @@ class _RecentActivityList extends StatelessWidget {
     required this.expenseRed,
     required this.textGrey,
     required this.transactions, // Corregido: requerido en constructor
+    required this.currentRates,
   });
 
   @override
@@ -887,14 +964,58 @@ class _RecentActivityList extends StatelessWidget {
           ...transactions.map((t) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 12.0),
-              child: _buildActivityCard(t),
+              child: _ActivityCard(
+                transaction: t,
+                cardColor: cardColor,
+                primaryGreen: primaryGreen,
+                expenseRed: expenseRed,
+                textGrey: textGrey,
+                currentRates: currentRates,
+              ),
             );
           }).toList(),
       ],
     );
   }
+}
 
-  Widget _buildActivityCard(Map<String, dynamic> t) {
+class _ActivityCard extends StatefulWidget {
+  final Map<String, dynamic> transaction;
+  final Color cardColor;
+  final Color primaryGreen;
+  final Color expenseRed;
+  final Color textGrey;
+  final Map<String, double> currentRates;
+
+  const _ActivityCard({
+    Key? key,
+    required this.transaction,
+    required this.cardColor,
+    required this.primaryGreen,
+    required this.expenseRed,
+    required this.textGrey,
+    required this.currentRates,
+  }) : super(key: key);
+
+  @override
+  State<_ActivityCard> createState() => _ActivityCardState();
+}
+
+class _ActivityCardState extends State<_ActivityCard> {
+  int _displayMode = 0; // 0: Original, 1: USD (BCV), 2: VES
+
+  void _toggleMode() {
+    final t = widget.transaction;
+    if (t['originalCurrency'] == 'USD_CASH')
+      return; // El efectivo es independiente
+    setState(() {
+      _displayMode = (_displayMode + 1) % 3;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.transaction;
     final bool isExpense = t['isExpense'] ?? true;
     // Conversión segura a double
     // Preferimos originalAmount si existe, sino amountInUSD (legacy)
@@ -914,8 +1035,41 @@ class _RecentActivityList extends StatelessWidget {
           0.0;
 
     final String title = t['title'] ?? 'Movimiento';
-    final String currency = t['originalCurrency'] ?? 'USD';
-    final String displayAmount = '\$${amount.toStringAsFixed(2)}';
+    final String originalCurrency = t['originalCurrency'] ?? 'USD';
+
+    // Calcular valores para los modos
+    double displayVal = amount;
+    String displaySymbol = '\$';
+    String displayLabel = originalCurrency;
+
+    if (originalCurrency == 'USD_CASH') {
+      // Modo único para efectivo
+      displayVal = amount;
+      displaySymbol = '\$';
+      displayLabel = 'Efectivo';
+    } else {
+      // Modos alternables
+      if (_displayMode == 0) {
+        // Original
+        displayVal = amount;
+        displaySymbol = originalCurrency == 'VES'
+            ? 'Bs'
+            : (originalCurrency == 'EUR' ? '€' : '\$');
+        displayLabel = originalCurrency;
+      } else if (_displayMode == 1) {
+        // USD (BCV)
+        final double amountInVES = (t['amountInVES'] ?? 0).toDouble();
+        final double bcv = widget.currentRates['BCV'] ?? 1.0;
+        displayVal = amountInVES / (bcv > 0 ? bcv : 1);
+        displaySymbol = '\$';
+        displayLabel = 'BCV';
+      } else {
+        // VES
+        displayVal = (t['amountInVES'] ?? 0).toDouble();
+        displaySymbol = 'Bs';
+        displayLabel = 'Bolívares';
+      }
+    }
 
     // Parseo de fecha seguro
     final DateTime date =
@@ -925,7 +1079,7 @@ class _RecentActivityList extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: cardColor.withOpacity(0.8),
+        color: widget.cardColor.withOpacity(0.8),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
       ),
@@ -936,11 +1090,11 @@ class _RecentActivityList extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFF071925),
               shape: BoxShape.circle,
-              border: Border.all(color: textGrey.withOpacity(0.2)),
+              border: Border.all(color: widget.textGrey.withOpacity(0.2)),
             ),
             child: Icon(
               isExpense ? Icons.arrow_upward : Icons.arrow_downward,
-              color: isExpense ? expenseRed : primaryGreen,
+              color: isExpense ? widget.expenseRed : widget.primaryGreen,
               size: 18,
             ),
           ),
@@ -958,17 +1112,33 @@ class _RecentActivityList extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  '$dateString • $currency',
-                  style: GoogleFonts.poppins(color: textGrey, fontSize: 12),
+                  '$dateString • $displayLabel',
+                  style: GoogleFonts.poppins(
+                    color: widget.textGrey,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
           ),
-          Text(
-            isExpense ? '-$displayAmount' : '+$displayAmount',
-            style: GoogleFonts.poppins(
-              color: isExpense ? expenseRed : primaryGreen,
-              fontWeight: FontWeight.bold,
+          GestureDetector(
+            onTap: _toggleMode,
+            child: Container(
+              color: Colors.transparent, // Hitbox area
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${isExpense ? "-" : "+"}$displaySymbol${NumberFormat.currency(symbol: '', decimalDigits: 2).format(displayVal)}',
+                    style: GoogleFonts.poppins(
+                      color: isExpense
+                          ? widget.expenseRed
+                          : widget.primaryGreen,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -1169,8 +1339,8 @@ class _PendingPaymentsBanner extends StatelessWidget {
 // Pantalla de Calculadora de Tasas (BottomSheet)
 class _CurrencyCalculatorSheet extends StatefulWidget {
   final Map<String, double> rates;
-
-  const _CurrencyCalculatorSheet({required this.rates});
+  const _CurrencyCalculatorSheet({Key? key, required this.rates})
+    : super(key: key);
 
   @override
   State<_CurrencyCalculatorSheet> createState() =>
@@ -1447,6 +1617,16 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
   }
 
   @override
+  void didUpdateWidget(_CurrencyCalculatorSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.rates != oldWidget.rates && _selectedDate == null) {
+      setState(() {
+        _activeRates = widget.rates;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final double val = double.tryParse(_amount) ?? 0.0;
     const primaryGreen = Color(0xFF4ADE80);
@@ -1496,10 +1676,17 @@ class _CurrencyCalculatorSheetState extends State<_CurrencyCalculatorSheet> {
                       'assets/images/logo.png',
                       height: 40,
                       fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.account_balance_wallet,
+                          color: Colors.white,
+                          size: 40,
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
 
-                    // Header: Tasas en vivo
+                    // Header: Tasas en vivo (Motor de Agregación)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -1955,6 +2142,13 @@ class _MainInfoCards extends StatelessWidget {
   final VoidCallback onToggleMode;
   final bool allHabitsDone;
   final bool obscureBalances;
+  final Map<String, double> currencyBalances;
+  final List<Map<String, dynamic>> rateHistory;
+  final Map<String, double> currentRates;
+  final double cashBalance;
+  final double totalSaved;
+  final double totalGoal;
+  final VoidCallback onSavingsTap;
 
   const _MainInfoCards({
     // Key habilitada
@@ -1966,6 +2160,13 @@ class _MainInfoCards extends StatelessWidget {
     required this.onToggleMode,
     required this.allHabitsDone,
     required this.obscureBalances,
+    required this.currencyBalances,
+    required this.rateHistory,
+    required this.currentRates,
+    required this.cashBalance,
+    required this.totalSaved,
+    required this.totalGoal,
+    required this.onSavingsTap,
   }) : super(key: key);
 
   @override
@@ -1988,6 +2189,7 @@ class _MainInfoCards extends StatelessWidget {
                         symbol: displayData['symbol'],
                         label: displayData['label'],
                         onTap: onToggleMode,
+                        cashBalance: cashBalance,
                         plantIsHealthy: allHabitsDone,
                         obscureBalances: obscureBalances,
                       )
@@ -1995,6 +2197,12 @@ class _MainInfoCards extends StatelessWidget {
                         index: index,
                         cardColor: cardColor,
                         primaryGreen: primaryGreen,
+                        currencyBalances: currencyBalances,
+                        rateHistory: rateHistory,
+                        currentRates: currentRates,
+                        totalSaved: totalSaved,
+                        totalGoal: totalGoal,
+                        onSavingsTap: onSavingsTap,
                       ),
               );
             },
@@ -2030,6 +2238,7 @@ class _PowerCard extends StatelessWidget {
   final String symbol;
   final String label;
   final VoidCallback onTap;
+  final double cashBalance;
   final bool plantIsHealthy;
   final bool obscureBalances;
 
@@ -2040,6 +2249,7 @@ class _PowerCard extends StatelessWidget {
     required this.symbol,
     required this.label,
     required this.onTap,
+    required this.cashBalance,
     required this.plantIsHealthy,
     required this.obscureBalances,
   });
@@ -2101,6 +2311,19 @@ class _PowerCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (cashBalance > 0 && !obscureBalances) ...[
+                      const SizedBox(width: 12),
+                      Container(height: 20, width: 1, color: Colors.white24),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Efectivo: \$${cashBalance.toStringAsFixed(2)}',
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFFFFD700),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -2138,6 +2361,13 @@ class _PowerCard extends StatelessWidget {
                         fit: BoxFit.contain,
                         color: plantIsHealthy ? null : Colors.grey,
                         colorBlendMode: plantIsHealthy ? null : BlendMode.srcIn,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            Icons.local_florist,
+                            color: plantIsHealthy ? primaryGreen : Colors.grey,
+                            size: 40,
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -2219,44 +2449,136 @@ class _InfoCard extends StatelessWidget {
   final int index;
   final Color cardColor;
   final Color primaryGreen;
+  final Map<String, double>? currencyBalances;
+  final List<Map<String, dynamic>>? rateHistory;
+  final Map<String, double>? currentRates;
+  final double totalSaved;
+  final double totalGoal;
+  final VoidCallback? onSavingsTap;
+
   const _InfoCard({
     required this.index,
     required this.cardColor,
     required this.primaryGreen,
+    this.currencyBalances,
+    this.rateHistory,
+    this.currentRates,
+    this.totalSaved = 0,
+    this.totalGoal = 0,
+    this.onSavingsTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context).textTheme;
     final title = index == 1 ? 'Inflación Personal' : 'Meta de Ahorro';
-    final amount = index == 1 ? '+12.5%' : '\$200 / \$500';
     final icon = index == 1 ? Icons.trending_up : Icons.flag_outlined;
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(title, style: theme.titleMedium),
-                const SizedBox(height: 12),
-                Text(
-                  amount,
-                  style: theme.headlineLarge?.copyWith(fontSize: 28),
-                ),
-              ],
+    // Lógica para mostrar resumen en la tarjeta de Inflación
+    String mainText = '';
+    String subText = '';
+
+    if (index == 1 && currencyBalances != null) {
+      // Calcular resumen rápido
+      double vesBalance = currencyBalances!['VES'] ?? 0;
+      double cashBalance = currencyBalances!['USD_CASH'] ?? 0;
+
+      if (vesBalance > 0) {
+        // Calcular pérdida aproximada
+        // (Simplificado para la tarjeta, el detalle está en la otra pantalla)
+        mainText = 'Ver Análisis';
+        subText = 'Bs ${vesBalance.toStringAsFixed(0)} expuestos';
+      } else if (cashBalance > 0) {
+        mainText = 'Efectivo';
+        subText = 'Balance: \$${cashBalance.toStringAsFixed(2)}';
+      } else {
+        mainText = 'Protegido';
+        subText = 'Sin saldo en Bs';
+      }
+    } else {
+      mainText =
+          '\$${totalSaved.toStringAsFixed(0)} / \$${totalGoal.toStringAsFixed(0)}';
+      subText = 'Toca para gestionar';
+    }
+
+    return GestureDetector(
+      onTap: () {
+        if (index == 1) {
+          // Navegar a detalle de inflación
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => InflationDetailScreen(
+                balances: currencyBalances ?? {},
+                history: rateHistory ?? [],
+                currentRates: currentRates ?? {},
+              ),
             ),
-          ),
-          Icon(icon, color: primaryGreen, size: 34),
-        ],
+          );
+        }
+        if (index == 2 && onSavingsTap != null) {
+          onSavingsTap!();
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(title, style: theme.titleMedium),
+                  const SizedBox(height: 12),
+                  Text(
+                    mainText,
+                    style: theme.headlineLarge?.copyWith(fontSize: 28),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        subText,
+                        style: GoogleFonts.poppins(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                      ),
+                      if (index == 1)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.touch_app,
+                                size: 12,
+                                color: primaryGreen,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Toca para detalles',
+                                style: GoogleFonts.poppins(
+                                  color: primaryGreen,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(icon, color: primaryGreen, size: 34),
+          ],
+        ),
       ),
     );
   }

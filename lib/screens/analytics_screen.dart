@@ -8,6 +8,37 @@ import '../models/transaction_model.dart';
 import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
 import 'dart:ui' as ui;
 
+// Modelo local para analíticas que soporta la separación de efectivo
+class _AnalyticsItem {
+  final DateTime date;
+  final double amountVES;
+  final double amountCash;
+  final bool isPositive;
+  final String categoryName;
+  final int categoryColor;
+  final String title;
+
+  _AnalyticsItem(
+    this.date,
+    this.amountVES,
+    this.amountCash,
+    this.isPositive,
+    this.categoryName,
+    this.categoryColor,
+    this.title,
+  );
+}
+
+class _CategorySummary {
+  final String name;
+  final int color;
+  double totalAmount;
+  final List<_AnalyticsItem> transactions;
+  _CategorySummary(this.name, this.color)
+    : totalAmount = 0.0,
+      transactions = [];
+}
+
 class AnalyticsScreen extends StatefulWidget {
   final bool showTutorial;
   const AnalyticsScreen({Key? key, this.showTutorial = false})
@@ -21,8 +52,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   bool _isLoading = true;
 
   // Datos
-  List<TransactionModel> _allTransactions = [];
+  List<_AnalyticsItem> _allTransactions = [];
   double _currentRate = 1.0; // Tasa para visualizar en USD
+  bool _showCashWallet = false; // Toggle para ver Efectivo o Digital
 
   // Filtros
   String _selectedPeriod = '1M';
@@ -34,6 +66,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   List<Map<String, dynamic>> _chartPoints = [];
   double _minBalance = 0.0;
   double _maxBalance = 1.0;
+  List<_CategorySummary> _categoryStats = [];
 
   // --- Keys para Tutorial ---
   final GlobalKey _filtersKey = GlobalKey();
@@ -105,34 +138,37 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     // 2. Cargar Transacciones (Formato compatible con WalletScreen)
     final String? data = prefs.getString('transactions_data');
-    List<TransactionModel> transactions = [];
+    List<_AnalyticsItem> transactions = [];
 
     if (data != null) {
       final List<dynamic> decoded = jsonDecode(data);
       transactions = decoded.map((item) {
-        // Mapeo manual: WalletScreen usa 'amountInVES', TransactionModel usa 'amount'
-        final double amount = (item['amountInVES'] ?? 0).toDouble();
+        final double amountVES = (item['amountInVES'] ?? 0).toDouble();
+        final String origCurrency = item['originalCurrency'] ?? 'VES';
+        final double origAmount = (item['originalAmount'] ?? 0).toDouble();
         final bool isExpense = item['isExpense'] ?? true;
         final DateTime date = DateTime.parse(item['date']);
+        final String categoryName = item['categoryName'] ?? 'General';
+        final int categoryColor = item['categoryColor'] ?? 0xFF90A4AE;
         final String title = item['title'] ?? 'Movimiento';
 
-        // Manejo seguro del ID
-        int? id;
-        if (item['id'] is int) {
-          id = item['id'];
-        } else if (item['id'] is String) {
-          id = int.tryParse(item['id']);
+        double finalVES = 0.0;
+        double finalCash = 0.0;
+
+        if (origCurrency == 'USD_CASH') {
+          finalCash = origAmount;
+        } else {
+          finalVES = amountVES;
         }
 
-        return TransactionModel(
-          id: id,
-          name: title,
-          concept: title,
-          amount: amount, // Mantenemos base en VES
-          isPositive: !isExpense,
-          date: date,
-          createdAt: date,
-          updatedAt: date,
+        return _AnalyticsItem(
+          date,
+          finalVES,
+          finalCash,
+          !isExpense,
+          categoryName,
+          categoryColor,
+          title,
         );
       }).toList();
     }
@@ -193,6 +229,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     double income = 0;
     double expense = 0;
     double currentBalanceVES = 0;
+    double currentBalanceCash = 0;
+    Map<String, _CategorySummary> catMap = {};
 
     // 1. Calcular balance inicial antes del periodo seleccionado
     int txIndex = 0;
@@ -200,9 +238,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         _allTransactions[txIndex].date.isBefore(startDate)) {
       final t = _allTransactions[txIndex];
       if (t.isPositive) {
-        currentBalanceVES += t.amount;
+        currentBalanceVES += t.amountVES;
+        currentBalanceCash += t.amountCash;
       } else {
-        currentBalanceVES -= t.amount;
+        currentBalanceVES -= t.amountVES;
+        currentBalanceCash -= t.amountCash;
       }
       txIndex++;
     }
@@ -228,18 +268,55 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           _allTransactions[txIndex].date.isBefore(nextCursor)) {
         final t = _allTransactions[txIndex];
         if (t.isPositive) {
-          currentBalanceVES += t.amount;
-          income += t.amount / _currentRate;
+          currentBalanceVES += t.amountVES;
+          currentBalanceCash += t.amountCash;
+
+          if (_showCashWallet) {
+            income += t.amountCash;
+          } else {
+            income += (t.amountVES / _currentRate);
+          }
         } else {
-          currentBalanceVES -= t.amount;
-          expense += t.amount / _currentRate;
+          currentBalanceVES -= t.amountVES;
+          currentBalanceCash -= t.amountCash;
+
+          if (_showCashWallet) {
+            expense += t.amountCash;
+            // Sumar a categoría si es gasto
+            if (t.amountCash > 0) {
+              catMap.putIfAbsent(
+                t.categoryName,
+                () => _CategorySummary(t.categoryName, t.categoryColor),
+              );
+              catMap[t.categoryName]!.totalAmount += t.amountCash;
+              catMap[t.categoryName]!.transactions.add(t);
+            }
+          } else {
+            double val = t.amountVES / _currentRate;
+            expense += val;
+            if (val > 0) {
+              catMap.putIfAbsent(
+                t.categoryName,
+                () => _CategorySummary(t.categoryName, t.categoryColor),
+              );
+              catMap[t.categoryName]!.totalAmount += val;
+              catMap[t.categoryName]!.transactions.add(t);
+            }
+          }
         }
         txIndex++;
       }
 
+      double valueToShow = 0.0;
+      if (_showCashWallet) {
+        valueToShow = currentBalanceCash;
+      } else {
+        valueToShow = currentBalanceVES / _currentRate;
+      }
+
       points.add({
         'date': cursor,
-        'value': currentBalanceVES / _currentRate,
+        'value': valueToShow,
         'label': groupByMonth
             ? DateFormat('MMM').format(cursor)
             : DateFormat('d').format(cursor),
@@ -278,12 +355,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     maxVal += range * 0.1;
     if (minVal < 0) minVal -= range * 0.1;
 
+    // Ordenar categorías por monto descendente
+    List<_CategorySummary> sortedCats = catMap.values.toList()
+      ..sort((a, b) => b.totalAmount.compareTo(a.totalAmount));
+
     setState(() {
       _periodIncome = income;
       _periodExpense = expense;
       _chartPoints = points;
       _minBalance = minVal - (range * 0.2);
       _maxBalance = maxVal + (range * 0.2);
+      _categoryStats = sortedCats;
     });
   }
 
@@ -319,6 +401,42 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Selector de Billetera (Digital vs Efectivo)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _WalletTypeButton(
+                            label: 'Digital (Bs)',
+                            isSelected: !_showCashWallet,
+                            onTap: () => setState(() {
+                              _showCashWallet = false;
+                              _applyFilter();
+                            }),
+                          ),
+                        ),
+                        Expanded(
+                          child: _WalletTypeButton(
+                            label: 'Efectivo (\$)',
+                            isSelected: _showCashWallet,
+                            onTap: () => setState(() {
+                              _showCashWallet = true;
+                              _applyFilter();
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
                   // Filtros de Tiempo
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -380,7 +498,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 30),
 
                   // Gráfico de Balance
@@ -404,6 +521,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       border: Border.all(color: Colors.white.withOpacity(0.05)),
                     ),
                     child: CustomPaint(
+                      size: Size.infinite,
                       painter: _BarChartPainter(
                         data: _chartPoints,
                         minVal: _minBalance,
@@ -412,6 +530,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                     ),
                   ),
+
+                  const SizedBox(height: 30),
+
+                  // Gráfico de Categorías (Pie Chart)
+                  if (_categoryStats.isNotEmpty) ...[
+                    Text(
+                      'Distribución de Gastos',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _CategoryPieChart(
+                      data: _categoryStats,
+                      onTap: _showCategoryDetails,
+                    ),
+                  ],
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -437,6 +575,136 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           style: GoogleFonts.poppins(color: Colors.white70, fontSize: 16),
         ),
       ],
+    );
+  }
+
+  void _showCategoryDetails(_CategorySummary category) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Color(0xFF071925),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                height: 4,
+                width: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Color(category.color).withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.category, color: Color(category.color)),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      category.name,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Total: \$${category.totalAmount.toStringAsFixed(2)}',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView.builder(
+                itemCount: category.transactions.length,
+                itemBuilder: (context, index) {
+                  final t = category.transactions[index];
+                  final amount = _showCashWallet
+                      ? t.amountCash
+                      : (t.amountVES / _currentRate);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.receipt_long, color: Colors.white54),
+                    title: Text(
+                      t.title,
+                      style: GoogleFonts.poppins(color: Colors.white),
+                    ),
+                    subtitle: Text(
+                      DateFormat('dd/MM/yyyy').format(t.date),
+                      style: GoogleFonts.poppins(color: Colors.white24),
+                    ),
+                    trailing: Text(
+                      '\$${amount.toStringAsFixed(2)}',
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFFFF5252),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WalletTypeButton extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _WalletTypeButton({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF4ADE80) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: GoogleFonts.poppins(
+            color: isSelected ? const Color(0xFF071925) : Colors.white54,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -554,6 +822,148 @@ class _BarChartPainter extends CustomPainter {
       ..color = Colors.white24
       ..strokeWidth = 1;
     canvas.drawLine(Offset(0, zeroY), Offset(size.width, zeroY), linePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class _CategoryPieChart extends StatelessWidget {
+  final List<_CategorySummary> data;
+  final Function(_CategorySummary) onTap;
+
+  const _CategoryPieChart({required this.data, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    double total = data.fold(0, (sum, item) => sum + item.totalAmount);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF132B3D),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 200,
+            width: 200,
+            child: GestureDetector(
+              onTapUp: (details) {
+                _handleTap(details, context, total);
+              },
+              child: CustomPaint(
+                painter: _PieChartPainter(data: data, total: total),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Leyenda
+          Wrap(
+            spacing: 16,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: data.map((cat) {
+              final percent = (cat.totalAmount / total * 100).toStringAsFixed(
+                1,
+              );
+              return GestureDetector(
+                onTap: () => onTap(cat),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: Color(cat.color),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${cat.name} ($percent%)',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleTap(TapUpDetails details, BuildContext context, double total) {
+    final RenderBox box = context.findRenderObject() as RenderBox;
+    final Offset localOffset = details.localPosition;
+    final Offset center = Offset(100, 100); // Radio es 100 (mitad de 200)
+
+    // Calcular ángulo
+    final double dx = localOffset.dx - center.dx;
+    final double dy = localOffset.dy - center.dy;
+    double angle = math.atan2(dy, dx); // -PI a PI
+    if (angle < 0) angle += 2 * math.pi; // 0 a 2PI
+
+    // Encontrar categoría
+    double startAngle = -math.pi / 2; // Empezamos arriba
+    if (startAngle < 0) startAngle += 2 * math.pi; // Normalizar inicio
+
+    // Ajustar ángulo del toque para coincidir con el inicio del dibujo (-PI/2)
+    double touchAngle = angle + (math.pi / 2);
+    if (touchAngle >= 2 * math.pi) touchAngle -= 2 * math.pi;
+
+    double currentAngle = 0;
+    for (var cat in data) {
+      final sweepAngle = (cat.totalAmount / total) * 2 * math.pi;
+      if (touchAngle >= currentAngle &&
+          touchAngle < currentAngle + sweepAngle) {
+        onTap(cat);
+        break;
+      }
+      currentAngle += sweepAngle;
+    }
+  }
+}
+
+class _PieChartPainter extends CustomPainter {
+  final List<_CategorySummary> data;
+  final double total;
+
+  _PieChartPainter({required this.data, required this.total});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width / 2, size.height / 2);
+    final strokeWidth = 30.0;
+
+    double startAngle = -math.pi / 2;
+
+    for (var cat in data) {
+      final sweepAngle = (cat.totalAmount / total) * 2 * math.pi;
+      final paint = Paint()
+        ..color = Color(cat.color)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth;
+
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius - strokeWidth / 2),
+        startAngle,
+        sweepAngle,
+        false,
+        paint,
+      );
+
+      startAngle += sweepAngle;
+    }
   }
 
   @override
