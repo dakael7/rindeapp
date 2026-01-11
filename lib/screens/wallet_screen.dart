@@ -62,33 +62,33 @@ class Transaction {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'title': title,
-    'originalAmount': originalAmount,
-    'originalCurrency': originalCurrency,
-    'rateType': rateType,
-    'exchangeRate': exchangeRate,
-    'amountInVES': amountInVES, // Guardamos Bs
-    'isExpense': isExpense,
-    'date': date.toIso8601String(),
-    'categoryName': categoryName,
-    'categoryColor': categoryColor,
-  };
+        'id': id,
+        'title': title,
+        'originalAmount': originalAmount,
+        'originalCurrency': originalCurrency,
+        'rateType': rateType,
+        'exchangeRate': exchangeRate,
+        'amountInVES': amountInVES, // Guardamos Bs
+        'isExpense': isExpense,
+        'date': date.toIso8601String(),
+        'categoryName': categoryName,
+        'categoryColor': categoryColor,
+      };
 
   factory Transaction.fromJson(Map<String, dynamic> json) => Transaction(
-    id: json['id'],
-    title: json['title'],
-    originalAmount: (json['originalAmount'] ?? 0).toDouble(),
-    originalCurrency: json['originalCurrency'] ?? 'VES',
-    rateType: json['rateType'] ?? 'BCV',
-    exchangeRate: (json['exchangeRate'] ?? 1).toDouble(),
-    // Recuperamos el valor base. Si es data vieja (amountInUSD), se asume 0 o se migra.
-    amountInVES: (json['amountInVES'] ?? 0).toDouble(),
-    isExpense: json['isExpense'],
-    date: DateTime.parse(json['date']),
-    categoryName: json['categoryName'] ?? 'General',
-    categoryColor: json['categoryColor'] ?? 0xFF90A4AE,
-  );
+        id: json['id'],
+        title: json['title'],
+        originalAmount: (json['originalAmount'] ?? 0).toDouble(),
+        originalCurrency: json['originalCurrency'] ?? 'VES',
+        rateType: json['rateType'] ?? 'BCV',
+        exchangeRate: (json['exchangeRate'] ?? 1).toDouble(),
+        // Recuperamos el valor base. Si es data vieja (amountInUSD), se asume 0 o se migra.
+        amountInVES: (json['amountInVES'] ?? 0).toDouble(),
+        isExpense: json['isExpense'],
+        date: DateTime.parse(json['date']),
+        categoryName: json['categoryName'] ?? 'General',
+        categoryColor: json['categoryColor'] ?? 0xFF90A4AE,
+      );
 }
 
 // ==========================================
@@ -159,19 +159,20 @@ class _WalletScreenState extends State<WalletScreen> {
         }
       }
       return true;
-    }).toList()..sort((a, b) {
-      switch (_sortOrder) {
-        case 'AMOUNT_ASC':
-          return a.amountInVES.compareTo(b.amountInVES);
-        case 'AMOUNT_DESC':
-          return b.amountInVES.compareTo(a.amountInVES);
-        case 'DATE_ASC':
-          return a.date.compareTo(b.date);
-        case 'DATE_DESC':
-        default:
-          return b.date.compareTo(a.date);
-      }
-    });
+    }).toList()
+      ..sort((a, b) {
+        switch (_sortOrder) {
+          case 'AMOUNT_ASC':
+            return a.amountInVES.compareTo(b.amountInVES);
+          case 'AMOUNT_DESC':
+            return b.amountInVES.compareTo(a.amountInVES);
+          case 'DATE_ASC':
+            return a.date.compareTo(b.date);
+          case 'DATE_DESC':
+          default:
+            return b.date.compareTo(a.date);
+        }
+      });
   }
 
   @override
@@ -205,9 +206,8 @@ class _WalletScreenState extends State<WalletScreen> {
     List<TransactionCategory> loadedCategories = [];
     if (catData != null) {
       final List<dynamic> decoded = jsonDecode(catData);
-      loadedCategories = decoded
-          .map((e) => TransactionCategory.fromJson(e))
-          .toList();
+      loadedCategories =
+          decoded.map((e) => TransactionCategory.fromJson(e)).toList();
     } else {
       // Categorías por defecto
       loadedCategories = [
@@ -238,9 +238,8 @@ class _WalletScreenState extends State<WalletScreen> {
     if (recurringData == null) return;
 
     List<dynamic> decoded = jsonDecode(recurringData);
-    List<RecurringTransaction> recurringItems = decoded
-        .map((e) => RecurringTransaction.fromJson(e))
-        .toList();
+    List<RecurringTransaction> recurringItems =
+        decoded.map((e) => RecurringTransaction.fromJson(e)).toList();
     bool changesMade = false;
     int executedCount = 0;
 
@@ -286,7 +285,8 @@ class _WalletScreenState extends State<WalletScreen> {
           title: '${item.title} (Auto)',
           originalAmount: item.isIndexed
               ? amountInVES
-              : item.amount, // Si es indexado, guardamos el VES resultante como original
+              : item
+                  .amount, // Si es indexado, guardamos el VES resultante como original
           originalCurrency: item.isIndexed ? 'VES' : item.currency,
           rateType: rateType,
           exchangeRate: rateUsed,
@@ -694,9 +694,8 @@ class _WalletScreenState extends State<WalletScreen> {
                           selectedColor: Color(cat.color).withOpacity(0.3),
                           checkmarkColor: Color(cat.color),
                           labelStyle: GoogleFonts.poppins(
-                            color: isSelected
-                                ? Color(cat.color)
-                                : Colors.white70,
+                            color:
+                                isSelected ? Color(cat.color) : Colors.white70,
                             fontWeight: isSelected
                                 ? FontWeight.bold
                                 : FontWeight.normal,
@@ -1028,8 +1027,8 @@ class _WalletScreenState extends State<WalletScreen> {
       symbol: t.originalCurrency == 'VES'
           ? 'Bs '
           : (t.originalCurrency == 'EUR'
-                ? '€ '
-                : (t.originalCurrency == 'USD_CASH' ? '💵 ' : '\$ ')),
+              ? '€ '
+              : (t.originalCurrency == 'USD_CASH' ? '💵 ' : '\$ ')),
       decimalDigits: 2,
     );
 
@@ -1479,7 +1478,6 @@ class _TransactionFormState extends State<_TransactionForm> {
                 ],
               ),
             ),
-
             if (_selectedRateType == 'MANUAL')
               Padding(
                 padding: const EdgeInsets.only(top: 12.0),
@@ -1968,9 +1966,8 @@ class _ExchangeModalState extends State<_ExchangeModal> {
                       duration: const Duration(milliseconds: 200),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       decoration: BoxDecoration(
-                        color: _isBuying
-                            ? widget.expenseRed
-                            : Colors.transparent,
+                        color:
+                            _isBuying ? widget.expenseRed : Colors.transparent,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       alignment: Alignment.center,

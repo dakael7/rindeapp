@@ -105,8 +105,8 @@ class ExchangeRateService {
           String bodyCrypto = responseCrypto.body;
           // corsproxy devuelve directo
           final dataCrypto = jsonDecode(bodyCrypto);
-          usdt = (dataCrypto['monitors']['binance']['price'] ?? usdt)
-              .toDouble();
+          usdt =
+              (dataCrypto['monitors']['binance']['price'] ?? usdt).toDouble();
         }
       } catch (_) {}
 
